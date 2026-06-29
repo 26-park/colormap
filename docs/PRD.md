@@ -57,6 +57,7 @@
 - 회원가입 / 로그인 (이메일 + 소셜 로그인)
 - 세계지도에서 가본 **도시 색칠** (기본 색상만)
 - 도시 누르면 → 그 안에 **위치별 사진+글 기록** (자유 핀)
+- 게시물에 **사진 여러 장 첨부** (앨범에서 다중 선택)
 - 게시물 가시성 토글 (public / friends / private)
 - 계정 가시성 토글 (public / private)
 - 내 프로필 = 내 지도 + 기본 통계(방문 도시 수, 나라 수)
@@ -65,6 +66,9 @@
 - 좋아요 · 댓글
 - 친구(상호 수락) 요청·수락·목록
 - 같은 도시 내 게시물을 **시간순 루트 선**으로 연결
+- **앨범 사진 위치 필터 토글**: "전체 사진 보기" ↔ "현재 핀 근방 사진 보기" 전환.
+  근방 보기는 사진 EXIF 위치를 읽어 선택한 핀 반경 내 사진만 추려 보여준다 (= 위치 기반 사진 추천).
+- **첨부 사진 순서 드래그 재정렬** (`post_media.order_index` 활용)
 
 ### v1.2 — "발견 + 수익화"
 - 탐색(돋보기) 탭 — 도시 단위 발견
@@ -183,6 +187,8 @@ create index posts_city_idx     on posts (city_id);
 create index posts_location_gix on posts using gist (location);
 
 -- 게시물 사진 (1:N, 순서 있음)
+-- 메모: 사진 다중 첨부(v1) · 순서 재정렬(v1.1)은 이 1:N 구조와 order_index로
+--       이미 DB 준비 완료. 두 기능 모두 스키마 변경 없이 UI만 추가하면 된다.
 create table post_media (
   id          uuid primary key default gen_random_uuid(),
   post_id     uuid not null references posts(id) on delete cascade,
