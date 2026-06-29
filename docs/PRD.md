@@ -55,8 +55,8 @@
 ### v1 — "혼자 써도 좋은 기록 앱" (출시 목표)
 유저가 없어도 가치 있어야 사람이 모인다. 소셜·탐색은 아직 끈다.
 - 회원가입 / 로그인 (이메일 + 소셜 로그인)
-- 세계지도에서 가본 **도시 색칠** (기본 색상만)
-- 도시 누르면 → 그 안에 **위치별 사진+글 기록** (자유 핀)
+- 세계지도에서 가본 **나라 색칠** (나라 단위, ISO 3166-1 / Natural Earth 경계)
+- 나라 탭 → 나라 상세에서 그 나라의 **위치별 사진+글 기록** 보기 (자유 핀)
 - 게시물에 **사진 여러 장 첨부** (앨범에서 다중 선택)
 - 게시물 가시성 토글 (public / friends / private)
 - 계정 가시성 토글 (public / private)
@@ -82,8 +82,8 @@
 
 > 앱 첫 진입 화면은 **메인 지도 탭**(프로필 아님). 하단 탭바: 지도 / +(작성) / 프로필.
 
-1. **첫 기록**: 가입 → username 온보딩 → 메인 지도 → 도시 검색/선택 → 색 자동 칠 → 도시 상세 → +(작성) → 지도 핀 또는 장소 검색으로 위치 지정 → 사진 다중 첨부 + 대표 지정 → 글 → 공개범위 선택(기본 전체공개) → 저장
-2. **내 지도 보기**: 메인 지도 탭(색칠된 세계지도) → 도시 탭 → 도시 상세(사진 그리드)에서 그 도시의 내 게시물 보기
+1. **첫 기록**: 가입 → username 온보딩 → 메인 지도 → 나라 탭 → 색 자동 칠 → 나라 상세 → +(작성) → **도시 선택(필수)** + 지도 핀 또는 장소 검색으로 위치 지정 → 사진 다중 첨부 + 대표 지정 → 글 → 공개범위 선택(기본 전체공개) → 저장
+2. **내 지도 보기**: 메인 지도 탭(나라 단위 색칠된 세계지도) → 나라 탭 → 나라 상세(사진 그리드, 도시별 필터)
 3. **가시성 관리**: 게시물 상세 → 공개범위 변경 / 프로필 → 설정(톱니) → 계정 공개범위 변경
 
 ---
@@ -114,21 +114,22 @@
 ## 8. 화면별 사양 (v1 — 디자인 단계 확정)
 
 ### 8.1 메인 지도
-- **choropleth(면) 색칠**: 도시 영역을 면으로 칠한다.
+- **choropleth(면) 색칠**: 나라 영역을 면으로 칠한다 (**나라 단위**, ISO 3166-1 / Natural Earth GeoJSON 경계).
 - **평면지도 ↔ 3D 지구본 토글**.
 - 우측 **줌 컨트롤**.
-- ⚠️ **색칠 단위 = 도시**(나라 단위 아님). 도시 경계(폴리곤) 데이터 소스는 미정 → 9-지도 구현 단계에서 결정(아래 미해결 항목 참고).
 
-### 8.2 도시 상세
+### 8.2 나라 상세
+- **진입**: 세계지도에서 나라 탭.
 - **상단**: 접힌 지도 미리보기(탭하면 펼쳐짐).
-- **메인**: 그 아래 **인스타 탐색식 정사각형 사진 그리드**(이 화면의 핵심).
-- 도시 이름 옆 **▾** 로 다른 도시로 전환.
-- **도시 색 선택**: 더보기(**…**) 메뉴 안에 위치. 이 색은 *세계지도에서 그 도시 영역에 칠해지는 색*이며 앱 테마색(주황)과 무관.
+- **메인**: **인스타 탐색식 정사각형 사진 그리드**(이 화면의 핵심) — 기본값은 그 나라의 전체 게시물(`posts.country_code` 조회).
+- 나라 이름 옆 **▾** → '내가 그 나라에서 기록한 도시 목록'(기록 있는 도시만, `posts.city_id` 기반) 드롭다운 → 특정 도시로 게시물 필터링.
+- **나라 색 선택**: 더보기(**…**) 메뉴 안. 이 색은 *세계지도에서 그 나라 영역에 칠해지는 색*(`country_visits.color`)이며 앱 테마색(주황)과 무관.
 
 ### 8.3 게시물 그리드 (공통 컴포넌트)
-- **인스타식 정사각형 사진 그리드**. 도시 상세·프로필이 **같은 컴포넌트를 재사용**한다.
+- **인스타식 정사각형 사진 그리드**. 나라 상세·프로필이 **같은 컴포넌트를 재사용**한다.
 
 ### 8.4 작성 (+)
+- **도시 선택**: 필수. 앱이 선택된 도시의 `cities.country_code`를 읽어 `posts.country_code`를 자동으로 채운다 — 사용자가 나라를 따로 입력할 필요 없음.
 - **위치 지정**: 지도 핀 + 장소 검색(지오코딩) **둘 다** 지원.
 - **사진 다중 첨부 + 대표 지정**. (대표 = 그리드/썸네일 커버. `post_media.order_index = 0`을 커버로 사용, 스키마 변경 없음.)
 - **공개범위**: 가로 세그먼트 토글, 기본값 **'전체공개(public)'**.
@@ -153,7 +154,7 @@
 - `profiles` — 사용자 프로필 (Supabase auth.users 확장)
 - `friendships` — 상호 친구 관계 (요청/수락 상태 포함)
 - `cities` — 사전 정의 도시 참조 데이터
-- `city_visits` — 사용자가 색칠한 도시 (지도 색칠의 원천)
+- `country_visits` — 사용자가 색칠한 나라 (지도 색칠의 원천, ISO 3166-1)
 - `posts` — 게시물 (도시 + 자유 핀 위치 + 가시성)
 - `post_media` — 게시물의 사진들 (1:N)
 - `post_likes` — 좋아요
@@ -216,31 +217,34 @@ create table cities (
 );
 create index cities_centroid_gix on cities using gist (centroid);
 
--- 색칠한 도시 (지도 색칠의 원천)
-create table city_visits (
+-- 색칠한 나라 (지도 색칠의 원천, 마이그레이션: country_based_coloring)
+create table country_visits (
   id           uuid primary key default gen_random_uuid(),
   user_id      uuid not null references profiles(id) on delete cascade,
-  city_id      bigint not null references cities(id),
-  color        text not null default '#3B82F6',  -- 기본색
+  country_code char(2) not null,                 -- ISO 3166-1 alpha-2
+  color        text not null default '#3B82F6',  -- 사용자가 나라별로 선택
   created_at   timestamptz not null default now(),
-  unique (user_id, city_id)
+  unique (user_id, country_code)
 );
-create index city_visits_user_idx on city_visits (user_id);
+create index country_visits_user_idx on country_visits (user_id);
 
--- 게시물 (도시 + 자유 핀 위치 + 가시성)
+-- 게시물 (나라 + 도시 + 자유 핀 위치 + 가시성)
+-- country_code: 작성 시 city_id → cities.country_code 에서 자동 파생; 사용자 입력 불필요
 create table posts (
   id           uuid primary key default gen_random_uuid(),
   user_id      uuid not null references profiles(id) on delete cascade,
   city_id      bigint not null references cities(id),
+  country_code char(2) not null,                 -- cities.country_code 에서 파생
   location     geography(point, 4326) not null,  -- 자유 핀
   caption      text,
   visibility   post_visibility not null default 'public',
   taken_at     timestamptz,                       -- 루트 정렬 기준
   created_at   timestamptz not null default now()
 );
-create index posts_user_idx     on posts (user_id);
-create index posts_city_idx     on posts (city_id);
-create index posts_location_gix on posts using gist (location);
+create index posts_user_idx        on posts (user_id);
+create index posts_city_idx        on posts (city_id);
+create index posts_country_idx     on posts (country_code, user_id);
+create index posts_location_gix    on posts using gist (location);
 
 -- 게시물 사진 (1:N, 순서 있음)
 -- 메모: 사진 다중 첨부(v1) · 순서 재정렬(v1.1)은 이 1:N 구조와 order_index로
@@ -310,8 +314,16 @@ create policy posts_select_visible on posts
 ### 9.4 핵심 PostGIS 쿼리 예시
 
 ```sql
--- 한 도시 안에서 내가 볼 수 있는 게시물 (RLS가 가시성 자동 적용)
-select * from posts where city_id = $1 order by taken_at nulls last;
+-- 한 나라의 게시물 전체 (나라 상세 기본 그리드)
+select * from posts where country_code = $1 order by taken_at nulls last;
+
+-- 한 나라 안에서 특정 도시로 필터링 (▾ 도시 선택)
+select * from posts where country_code = $1 and city_id = $2 order by taken_at nulls last;
+
+-- 내가 특정 나라에서 기록한 도시 목록 (▾ 드롭다운용)
+select distinct c.id, c.name
+from posts p join cities c on c.id = p.city_id
+where p.user_id = auth.uid() and p.country_code = $1;
 
 -- 내 근처 여행 기록 (반경 5km)
 select * from posts
@@ -330,7 +342,6 @@ order by p.created_at desc;
 ---
 
 ## 10. 미해결/다음 결정 사항
-- ⭐ **도시 경계(폴리곤) 데이터 소스** — 메인 지도 choropleth는 도시 단위 면 색칠인데, 도시 경계 폴리곤을 어디서 가져올지 미정(예: Natural Earth, OSM 행정경계, GeoNames+자체 폴리곤 등). **지도 구현 단계(8.1)에서 결정.**
 - 이미지 업로드 최대 장수/용량, 압축 정책
 - 도시 참조 데이터 규모 (전 세계 인구 N만 이상 도시? 큐레이션?)
 - 신고/차단 기능 (소셜 앱이면 스토어 심사상 사실상 필요 — v1.1 권장)
@@ -341,6 +352,7 @@ order by p.created_at desc;
 - **디자인 토큰 확정**: 흰 배경 / 주황 `#ff6a2b` / 둥근 모서리 / Pretendard / 390×844. (6 참고)
 - **네비게이션 확정**: 하단 탭 3개(지도/+/프로필), 첫 화면 = 지도. (7 참고)
 - **프로필 미니 지도 제거**(지도 탭과 중복). 남의 프로필 색칠 지도는 v1.1.
+- **색칠 단위 나라로 변경**: 도시 단위 choropleth → 나라 단위. 나라 경계는 Natural Earth(퍼블릭 도메인) GeoJSON. 도시 경계 폴리곤 불필요 → 해당 미해결 항목 해소.
 
 ---
 
