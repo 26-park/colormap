@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { type Session, type AuthError } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 
@@ -9,30 +9,57 @@ type SignUpResult = {
 
 type AuthContextValue = {
   session: Session | null;
+  /** null = 확인 중, false = 프로필 없음(온보딩 필요), true = 프로필 있음 */
+  hasProfile: boolean | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<string | null>;
   signUp: (email: string, password: string) => Promise<SignUpResult>;
   signOut: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [hasProfile, setHasProfile] = useState<boolean | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  // session 확정 + profile 확인이 모두 끝날 때까지 loading
+  const loading = authLoading || hasProfile === null;
+
+  const checkProfile = useCallback(async (userId: string) => {
+    const { data } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('id', userId)
+      .maybeSingle();
+    setHasProfile(data !== null);
+  }, []);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      setLoading(false);
+      if (session) {
+        checkProfile(session.user.id);
+      } else {
+        setHasProfile(false); // 비로그인 — 값 자체는 의미없지만 null 해소
+      }
+      setAuthLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
+      if (session) {
+        setHasProfile(null); // 재확인 시작 (loading = true로 되돌림)
+        checkProfile(session.user.id);
+      } else {
+        setHasProfile(false);
+      }
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [checkProfile]);
 
   const signIn = async (email: string, password: string): Promise<string | null> => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -49,8 +76,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await supabase.auth.signOut();
   };
 
+  const refreshProfile = useCallback(async () => {
+    if (!session) return;
+    await checkProfile(session.user.id);
+  }, [session, checkProfile]);
+
   return (
-    <AuthContext.Provider value={{ session, loading, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ session, hasProfile, loading, signIn, signUp, signOut, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );
