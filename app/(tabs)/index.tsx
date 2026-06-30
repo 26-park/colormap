@@ -22,6 +22,27 @@ const MAP_STYLE = {
   ],
 };
 
+const DEFAULT_GREY = '#CDD2D8'; // 미방문 나라 기본색
+
+// TEMP: Phase 2a 검증용 하드코딩 매핑
+// TODO(Phase 2b): country_visits에서 읽어온 데이터로 교체
+const VISITED_TEMP: Record<string, string> = {
+  KR: '#ff6a2b',
+  JP: '#2f80ed',
+};
+
+// 나라별 색을 매핑하는 fill-color match 표현식 빌더
+function buildFillColor(visited: Record<string, string>) {
+  const entries = Object.entries(visited);
+  if (entries.length === 0) return DEFAULT_GREY; // match는 case가 0개면 invalid
+  return [
+    'match',
+    ['get', 'cc'],
+    ...entries.flatMap(([cc, color]) => [cc, color]),
+    DEFAULT_GREY,
+  ];
+}
+
 export default function MapScreen() {
   const insets = useSafeAreaInsets();
 
@@ -44,7 +65,7 @@ export default function MapScreen() {
           <Layer
             id="country-fill"
             type="fill"
-            paint={{ 'fill-color': '#CDD2D8', 'fill-opacity': 1 }}
+            paint={{ 'fill-color': buildFillColor(VISITED_TEMP) as any, 'fill-opacity': 1 }}
           />
           <Layer
             id="country-border"
