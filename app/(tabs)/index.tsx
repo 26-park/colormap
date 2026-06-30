@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Alert, StyleSheet, View, Text, TouchableOpacity, type NativeSyntheticEvent } from 'react-native';
+import { StyleSheet, View, Text, TouchableOpacity, type NativeSyntheticEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import {
   Map,
   Camera,
@@ -42,6 +43,7 @@ function buildFillColor(visited: Record<string, string>) {
 
 export default function MapScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { session } = useAuth();
   const [visitedMap, setVisitedMap] = useState<Record<string, string>>({});
 
@@ -72,9 +74,7 @@ export default function MapScreen() {
     const nm = feature?.properties?.nm;
     if (!cc) return; // 바다 / 코드 없는 지점(Siachen 등) 무시
 
-    console.log({ cc, nm });
-    Alert.alert(nm, cc);
-    // TODO(A-2): 이 alert를 나라상세 화면 이동으로 교체
+    router.push({ pathname: '/country/[cc]', params: { cc, nm } } as any);
   }
 
   return (
