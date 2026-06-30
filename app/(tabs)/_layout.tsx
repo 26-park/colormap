@@ -13,6 +13,10 @@ export default function TabLayout() {
           backgroundColor: theme.colors.background,
           borderTopColor: theme.colors.border,
         },
+        tabBarLabelStyle: {
+          fontSize: 11,
+          fontWeight: '500',
+        },
       }}
     >
       <Tabs.Screen
@@ -25,11 +29,11 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="compose"
+        name="explore"
         options={{
-          title: '작성',
+          title: '탐색',
           tabBarIcon: ({ color, size }) => (
-            <IconSymbol name="plus.circle.fill" size={size} color={color} />
+            <IconSymbol name="magnifyingglass" size={size} color={color} />
           ),
         }}
       />
@@ -41,6 +45,11 @@ export default function TabLayout() {
             <IconSymbol name="person.fill" size={size} color={color} />
           ),
         }}
+      />
+      {/* compose 탭은 탭바에서 제거 — 나라 상세에서 진입 예정 */}
+      <Tabs.Screen
+        name="compose"
+        options={{ href: null }}
       />
     </Tabs>
   );
