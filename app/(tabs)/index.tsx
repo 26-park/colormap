@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -7,6 +8,8 @@ import {
   Layer,
 } from '@maplibre/maplibre-react-native';
 import { theme } from '@/constants/theme';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/context/auth';
 import countriesGeoJSON from '@/assets/geo/countries.json';
 
 // Phase 1: 인라인 스타일 JSON — 외부 타일 없음. Phase 2에서 Tintrail 커스텀 스타일로 교체
@@ -24,13 +27,6 @@ const MAP_STYLE = {
 
 const DEFAULT_GREY = '#CDD2D8'; // 미방문 나라 기본색
 
-// TEMP: Phase 2a 검증용 하드코딩 매핑
-// TODO(Phase 2b): country_visits에서 읽어온 데이터로 교체
-const VISITED_TEMP: Record<string, string> = {
-  KR: '#ff6a2b',
-  JP: '#2f80ed',
-};
-
 // 나라별 색을 매핑하는 fill-color match 표현식 빌더
 function buildFillColor(visited: Record<string, string>) {
   const entries = Object.entries(visited);
@@ -45,6 +41,29 @@ function buildFillColor(visited: Record<string, string>) {
 
 export default function MapScreen() {
   const insets = useSafeAreaInsets();
+  const { session } = useAuth();
+  const [visitedMap, setVisitedMap] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const userId = session?.user.id;
+    if (!userId) return;
+
+    supabase
+      .from('country_visits')
+      .select('country_code, color')
+      .eq('user_id', userId)
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('country_visits 조회 실패:', error);
+          return;
+        }
+        const map: Record<string, string> = {};
+        for (const row of data ?? []) {
+          map[row.country_code] = row.color;
+        }
+        setVisitedMap(map);
+      });
+  }, [session?.user.id]);
 
   return (
     <View style={styles.container}>
@@ -65,7 +84,7 @@ export default function MapScreen() {
           <Layer
             id="country-fill"
             type="fill"
-            paint={{ 'fill-color': buildFillColor(VISITED_TEMP) as any, 'fill-opacity': 1 }}
+            paint={{ 'fill-color': buildFillColor(visitedMap) as any, 'fill-opacity': 1 }}
           />
           <Layer
             id="country-border"
