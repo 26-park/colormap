@@ -2,14 +2,14 @@ import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { theme } from '@/constants/theme';
 
-// TODO: Mapbox/MapLibre 지도 화면으로 교체 (다음 단계)
-export default function MapScreen() {
+// TODO: 게시물 작성 화면으로 교체 (다음 단계)
+export default function ComposeScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.container}>
-        <Text style={styles.emoji}>🗺️</Text>
-        <Text style={styles.title}>지도</Text>
-        <Text style={styles.subtitle}>세계지도 화면 준비 중</Text>
+        <Text style={styles.emoji}>✏️</Text>
+        <Text style={styles.title}>작성</Text>
+        <Text style={styles.subtitle}>게시물 작성 화면 준비 중</Text>
       </View>
     </SafeAreaView>
   );

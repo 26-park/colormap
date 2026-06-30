@@ -1,9 +1,13 @@
 import { useEffect } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import * as SplashScreen from 'expo-splash-screen';
 import 'react-native-reanimated';
 
 import { AuthProvider, useAuth } from '@/context/auth';
+
+// auth 상태가 확정될 때까지 스플래시 화면 유지
+SplashScreen.preventAutoHideAsync();
 
 function RootLayoutNav() {
   const { session, hasProfile, loading } = useAuth();
@@ -13,18 +17,18 @@ function RootLayoutNav() {
   useEffect(() => {
     if (loading) return;
 
+    // auth 확정 → 스플래시 해제 후 올바른 화면으로 이동
+    SplashScreen.hideAsync();
+
     const seg0 = segments[0] as string | undefined;
     const inAuth = seg0 === '(auth)';
     const inOnboarding = seg0 === '(onboarding)';
 
     if (!session) {
-      // 비로그인 → 로그인 화면
       if (!inAuth) router.replace('/(auth)/login' as any);
     } else if (!hasProfile) {
-      // 로그인됐지만 프로필 없음 → username 온보딩
       if (!inOnboarding) router.replace('/(onboarding)/username' as any);
     } else {
-      // 로그인 + 프로필 있음 → 앱 본체
       if (inAuth || inOnboarding) router.replace('/(tabs)');
     }
   }, [session, hasProfile, loading]);
