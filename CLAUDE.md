@@ -8,24 +8,43 @@
 여행 기록을 세계지도 위에 쌓고, 도시 단위로 남의 여행을 발견하는 **위치 기반 여행 SNS**.
 지도 색칠은 진입점일 뿐이고, 핵심 가치는 도시 안에서 흐르는 콘텐츠와 발견(탐색)에 있다.
 
+## 앱 식별자 (확정)
+
+- **앱 이름**: Tintrail (tint + trail, "여행의 색 자취" — 구 colormap에서 변경)
+- **android.package / ios.bundleIdentifier**: `com.tintrail.app`
+- **slug**: `tintrail` / **scheme**: `tintrail`
+
 ## 기술 스택 (확정)
 
 - **앱**: Expo (React Native) + TypeScript / 현재 **Expo SDK 54** (Expo Go 호환 위해 54로 시작, 추후 56으로 업그레이드 예정)
 - **네비게이션**: Expo Router (파일 기반)
 - **백엔드/DB**: Supabase (Postgres + PostGIS)
-- **지도**: Mapbox (시작은 MapLibre 가능) — 네이티브 모듈이라 Expo Go 불가, 개발 빌드 필요
+- **지도**: `@maplibre/maplibre-react-native` **v11** — New Architecture 전용, Feature State로 나라 색칠 적합, 무료
+  - v11 API 주의 (v10과 크게 다름):
+    - 지도: `<Map mapStyle={...}>` (구 `MapView`)
+    - 카메라: `<Camera initialViewState={{centerCoordinate, zoomLevel}}>` (구 `defaultSettings`)
+    - 소스: `<GeoJSONSource id data promoteId>` (구 `ShapeSource` + `shape` prop)
+    - 레이어: `<Layer id type="fill"|"line"|... paint={{...}}>` 단일 컴포넌트 (구 `FillLayer`/`LineLayer`)
+    - paint 키는 Style Spec 형식: `'fill-color'`, `'line-width'` 등 (camelCase 아님)
+    - `style` prop은 deprecated → `paint`/`layout` 사용
+  - 네이티브 모듈 → Expo Go 불가, **개발 빌드 필수**
+- **빌드 방식**: 로컬 안드로이드 `npx expo run:android` (Windows 환경, 맥 없음)
+  - 이후 JS 핫리로드: `npx expo start --dev-client`
+  - iOS 빌드는 EAS 클라우드 빌드 사용
 - **이미지**: Supabase Storage (추후 CDN 전환 여지)
 - **빌드/배포**: Expo EAS (Build / Submit / Update)
 - **결제(추후)**: RevenueCat + 스토어 인앱결제
 - **분석/모니터링(추후)**: PostHog + Sentry
-- 개발 환경: **Windows**, 맥 없음 → iOS 빌드는 EAS 클라우드 빌드 사용
 
 ## 현재 단계 ⭐ (자주 바뀌는 부분)
 
-- **지금: v1 개발 중.** 아래 v1 범위 안에서만 구현할 것. v1.1, v1.2 기능은 아직 만들지 말 것.
-- 환경 셋업 완료: Expo 프로젝트 생성됨, 폰 Expo Go에서 실행 확인됨.
+- **지금: Phase 0 — MapLibre 연동 + dev build 전환 + 빈 지도**
+  - 지도 탭에 MapLibre `<Map>` + `<Camera>` 연결 완료 (임시 demotiles 스타일)
+  - dev build(`npx expo run:android`) 필요 — Expo Go로는 지도 뜨지 않음
+  - 다음: Phase 1 Supabase 인증/온보딩 → Phase 2 나라 색칠 지도
+- v1 범위 안에서만 구현할 것. v1.1, v1.2 기능은 아직 만들지 말 것.
+- 환경 셋업 완료: Expo 프로젝트 생성됨, GitHub 연결됨.
 - **디자인 단계 완료**: 디자인 토큰·네비게이션·화면별 사양 확정 → docs/PRD.md 6~8장에 반영.
-- 다음 작업 예정: GitHub 연결 → Supabase 셋업 + 스키마 마이그레이션 → 인증/온보딩 화면 → 지도 화면.
 
 ## 기능 범위 (단계별 — 범위 밖은 건드리지 말 것)
 
@@ -74,6 +93,20 @@
 - **도시**: 사전 정의된 참조 목록(`cities` 테이블)에서 선택 → 지도 색칠·통계의 기준.
 - **도시 안 위치**: 자유 핀(위경도). 게시물이 이 핀에 붙는다.
 - **루트**: 같은 도시 내 게시물을 `taken_at` 기준 정렬해 선으로 잇는다 (별도 테이블 없이 계산으로 도출, v1.1).
+
+## GeoJSON 경계 데이터
+
+- **파일**: `assets/geo/countries.json` — Natural Earth 50m, 242개 피처, 278KB
+- **스키마**: `feature.id` = ISO 3166-1 alpha-2 대문자 / `properties.cc` = 동일한 ISO A2 코드 / `properties.nm` = 나라 이름
+- **join 키**: `feature.id` (= `cc`) ↔ DB `posts.country_code` / `country_visits.country_code` (`char(2)`)
+- **promoteId**: ShapeSource에 `promoteId="cc"` 설정 — feature-state 키도 `cc` 기준
+- **엣지케이스 (내용/스키마 절대 수정 금지)**:
+  - Kosovo = XK (ISO 미공인, 자체 코드)
+  - 의존영토 자기코드: GL(그린란드), PR(푸에르토리코) 등
+  - 중복 id 의도적: SO(소말리아/소말릴란드), CY(키프로스/북키프로스), AU(오스트레일리아 본토+영토) 등
+  - Siachen 빙하 = 코드 없음(피처 없음)
+- **색칠 정책**: 나라 단위 색칠, 색은 `country_visits.color`로 사용자가 나라마다 지정.
+  나라 색 선택 UI는 나라상세 화면(v1 범위). 이 파일의 내용·스키마 변경 금지.
 
 ## 데이터 모델 (요약 — 상세 SQL은 docs/PRD.md 참고)
 
