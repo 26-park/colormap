@@ -9,6 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+
 import { useEffect, useRef, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
