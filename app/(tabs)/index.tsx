@@ -141,10 +141,12 @@ export default function MapScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* ── 작성 FAB (정적 배치 — 작성 흐름은 지도→나라상세→기록추가, 다음 Phase 연결) ── */}
+      {/* ── 작성 FAB ── */}
+      {/* TODO(C-2-3): 지도→나라상세→기록추가 정식 흐름으로 교체. 지금은 C-2-1b 업로드 테스트용 임시 연결. */}
       <TouchableOpacity
         style={[styles.fab, { bottom: insets.bottom + 20 }]}
         activeOpacity={0.85}
+        onPress={() => router.push('/compose')}
       >
         <Text style={styles.fabText}>+</Text>
       </TouchableOpacity>
