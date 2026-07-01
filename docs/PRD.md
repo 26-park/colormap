@@ -341,10 +341,24 @@ where (pr.visibility = 'public' and p.visibility = 'public')
 order by p.created_at desc;
 ```
 
+### 9.5 Storage 보안 설계 (post-media 버킷)
+
+> 결정: 2026-07-01 (C-2-1a). 마이그레이션: `supabase/migrations/20260701100000_post_media_storage.sql`
+
+- **버킷**: `post-media`, **private**(`public = false`). URL이 유출돼도 그 자체로는 접근 불가.
+- **경로 규칙**: `posts/{user_id}/{post_id}/{파일명}`
+- **조회 보안 = B 방식**: Storage 정책은 "인증 유저"까지만 열어준다. 실제 가시성(public/friends/private) 판정은 **posts 테이블 RLS**(`posts_select_visible`, 9.3)가 담당한다. 사진 URL을 얻으려면 먼저 해당 `post_media`/`posts` 행을 select할 수 있어야 하는데, 그 posts 행이 RLS에 막히면 URL 자체를 얻지 못하므로 Storage 단에서 가시성 로직을 중복 구현하지 않는다.
+- **조회 방식**: signed URL, 만료 1시간. 발급 로직은 C-2-1c.
+- **storage.objects 정책** (전부 `bucket_id = 'post-media'`로 한정):
+  - INSERT: 인증 유저이고 경로의 user_id 세그먼트(`(storage.foldername(name))[2]`)가 `auth.uid()`와 일치할 때만 — 본인 폴더에만 업로드.
+  - SELECT: 인증 유저면 허용(세부 가시성은 위 B 방식대로 posts RLS가 게이트키핑).
+  - UPDATE / DELETE: 본인 폴더만.
+- **미해결(C-2-1b에서 결정)**: 이미지 업로드 최대 장수/용량, 압축 정책 → 확정되면 `storage.buckets.file_size_limit`/`allowed_mime_types` 설정하는 마이그레이션 추가.
+
 ---
 
 ## 10. 미해결/다음 결정 사항
-- 이미지 업로드 최대 장수/용량, 압축 정책
+- 이미지 업로드 최대 장수/용량, 압축 정책 — 저장 위치·보안 정책은 결정됨(9.5 참고), 장수/용량/압축 수치는 C-2-1b에서 결정
 - 도시 참조 데이터 규모 (전 세계 인구 N만 이상 도시? 큐레이션?)
 - 신고/차단 기능 (소셜 앱이면 스토어 심사상 사실상 필요 — v1.1 권장)
 - 푸시 알림 (좋아요/댓글/친구요청) — v1.1

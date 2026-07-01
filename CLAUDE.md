@@ -45,6 +45,8 @@
 - v1 범위 안에서만 구현할 것. v1.1, v1.2 기능은 아직 만들지 말 것.
 - 환경 셋업 완료: Expo 프로젝트 생성됨, GitHub 연결됨.
 - **디자인 단계 완료**: 디자인 토큰·네비게이션·화면별 사양 확정 → docs/PRD.md 6~8장에 반영.
+- **C-1 완료**: 나라상세 게시물 사진 그리드(3열, 대표사진, 여러장 배지).
+- **C-2-1a 완료**: `post-media` private Storage 버킷 + RLS 정책 마이그레이션 작성 (설계: docs/PRD.md 9.5). db push는 아직 — 다음: C-2-1b 사진 선택/업로드 코드(expo-image-picker 도입, dev build 재빌드 필요).
 
 ## 기능 범위 (단계별 — 범위 밖은 건드리지 말 것)
 
@@ -115,6 +117,7 @@ profiles, friendships, cities, country_visits, posts, post_media, post_likes, co
 
 - PostGIS `geography(point, 4326)` 사용 (cities.centroid, posts.location)
 - 전체 스키마 + RLS 정책은 **docs/PRD.md 9장**에 있음. 마이그레이션은 거기서 가져올 것.
+- 게시물 사진은 Supabase Storage private 버킷 `post-media` (경로 `posts/{user_id}/{post_id}/{파일명}`). 보안 설계·RLS 정책은 **docs/PRD.md 9.5** 참고.
 
 ## 코딩 규칙 / 선호
 
