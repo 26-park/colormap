@@ -7,19 +7,39 @@ import {
   Text,
   TouchableOpacity,
   View,
+  type NativeSyntheticEvent,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { decode } from 'base64-arraybuffer';
 import { uuid } from 'expo-modules-core';
+import * as Location from 'expo-location';
+import { Map, Camera, Marker, type PressEvent } from '@maplibre/maplibre-react-native';
 import { theme } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/auth';
+import { getCountryFromCoord, type CountryMatch } from '@/lib/countryFromCoord';
 
 const MAX_PHOTOS = 10;
 const MAX_DIMENSION = 1600;
 const JPEG_QUALITY = 0.8;
+
+// 위치 선택용 미니맵 — MapScreen과 같은 인라인 스타일, 나라 채색 없이 배경만.
+const PICKER_MAP_STYLE = {
+  version: 8,
+  sources: {},
+  layers: [
+    { id: 'background', type: 'background', paint: { 'background-color': '#EBF1F7' } },
+  ],
+};
+
+type LocationMode = 'map' | 'gps';
+
+type PickedCoord = {
+  lng: number;
+  lat: number;
+};
 
 type UploadStatus = 'resizing' | 'uploading' | 'done' | 'error';
 
@@ -39,12 +59,54 @@ function statusLabel(status: UploadStatus) {
   }
 }
 
-// TODO(C-2-3): 정식 작성 폼(캡션/공개범위/위치 선택 + posts/post_media 저장)으로 교체.
-// 지금은 사진 선택 → 리사이즈 → post-media 업로드 파이프라인 검증용 임시 화면.
+// TODO(C-2-3): 정식 작성 폼(캡션/공개범위 + posts/post_media 저장)으로 교체.
+// 지금은 위치 선택→나라 파생, 사진 선택→리사이즈→업로드 파이프라인 검증용 임시 화면.
 export default function ComposeScreen() {
   const { session } = useAuth();
+
+  // ── 위치 선택 (C-2-2b) ──
+  const [locationMode, setLocationMode] = useState<LocationMode>('map');
+  const [pickedCoord, setPickedCoord] = useState<PickedCoord | null>(null);
+  const [countryMatch, setCountryMatch] = useState<CountryMatch | null>(null);
+  const [gpsLoading, setGpsLoading] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
+
+  // ── 사진 업로드 (C-2-1b) ──
   const [items, setItems] = useState<UploadItem[]>([]);
   const [busy, setBusy] = useState(false);
+
+  function handleCoordPicked(lng: number, lat: number) {
+    setLocationError(null);
+    setPickedCoord({ lng, lat });
+    setCountryMatch(getCountryFromCoord(lng, lat));
+  }
+
+  function handleMapPress(event: NativeSyntheticEvent<PressEvent>) {
+    const [lng, lat] = event.nativeEvent.lngLat;
+    handleCoordPicked(lng, lat);
+  }
+
+  async function handleUseCurrentLocation() {
+    setLocationError(null);
+    setGpsLoading(true);
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (!permission.granted) {
+        setLocationError('위치 권한이 거부됐어요. 지도에서 직접 선택해주세요.');
+        setLocationMode('map');
+        return;
+      }
+
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      handleCoordPicked(position.coords.longitude, position.coords.latitude);
+    } catch (err) {
+      console.error('[C-2-2b] 현재 위치 획득 실패:', err);
+      setLocationError('현재 위치를 가져오지 못했어요. 지도에서 직접 선택해주세요.');
+      setLocationMode('map');
+    } finally {
+      setGpsLoading(false);
+    }
+  }
 
   async function handlePickAndUpload() {
     const userId = session?.user.id;
@@ -112,6 +174,60 @@ export default function ComposeScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.container}>
+        {/* ── 위치 선택 ── */}
+        <Text style={styles.title}>위치 선택 테스트</Text>
+        <Text style={styles.subtitle}>C-2-2b — 핀 선택 → 나라 자동 파생까지만. 저장은 다음 단계(C-2-3).</Text>
+
+        <View style={styles.modeToggle}>
+          <TouchableOpacity
+            style={[styles.modeBtn, locationMode === 'map' && styles.modeBtnActive]}
+            onPress={() => setLocationMode('map')}
+          >
+            <Text style={[styles.modeBtnText, locationMode === 'map' && styles.modeBtnTextActive]}>지도에서 선택</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.modeBtn, locationMode === 'gps' && styles.modeBtnActive]}
+            onPress={() => setLocationMode('gps')}
+          >
+            <Text style={[styles.modeBtnText, locationMode === 'gps' && styles.modeBtnTextActive]}>현재 위치</Text>
+          </TouchableOpacity>
+        </View>
+
+        {locationError && <Text style={styles.errorText}>{locationError}</Text>}
+
+        {locationMode === 'map' ? (
+          <View style={styles.pickerMapWrap}>
+            <Map style={styles.pickerMap} mapStyle={PICKER_MAP_STYLE as any} onPress={handleMapPress}>
+              <Camera initialViewState={{ centerCoordinate: [127.5, 36], zoomLevel: 2 }} />
+              {pickedCoord && (
+                <Marker lngLat={[pickedCoord.lng, pickedCoord.lat]}>
+                  <View style={styles.pin} />
+                </Marker>
+              )}
+            </Map>
+          </View>
+        ) : (
+          <TouchableOpacity style={styles.pickBtn} onPress={handleUseCurrentLocation} disabled={gpsLoading}>
+            {gpsLoading
+              ? <ActivityIndicator color="#fff" />
+              : <Text style={styles.pickBtnText}>현재 위치 가져오기</Text>
+            }
+          </TouchableOpacity>
+        )}
+
+        {pickedCoord && (
+          <View style={styles.resultBox}>
+            <Text style={styles.resultCoord}>lat {pickedCoord.lat.toFixed(5)}, lng {pickedCoord.lng.toFixed(5)}</Text>
+            {countryMatch
+              ? <Text style={styles.resultCountry}>{countryMatch.nm} / {countryMatch.cc}</Text>
+              : <Text style={styles.errorText}>위치를 다시 선택해주세요 (나라를 찾을 수 없어요)</Text>
+            }
+          </View>
+        )}
+
+        <View style={styles.divider} />
+
+        {/* ── 사진 업로드 ── */}
         <Text style={styles.title}>사진 업로드 테스트</Text>
         <Text style={styles.subtitle}>C-2-1b — 선택 → 리사이즈 → 업로드까지만. DB 저장은 다음 단계(C-2-3).</Text>
 
@@ -157,6 +273,79 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: theme.colors.textSecondary,
   },
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: theme.colors.border,
+    marginVertical: 4,
+  },
+
+  // 위치 모드 토글
+  modeToggle: {
+    flexDirection: 'row',
+    backgroundColor: '#f3f4f6',
+    borderRadius: theme.radius.card,
+    padding: 3,
+    gap: 3,
+  },
+  modeBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: theme.radius.card,
+    alignItems: 'center',
+  },
+  modeBtnActive: {
+    backgroundColor: '#fff',
+  },
+  modeBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: theme.colors.textSecondary,
+  },
+  modeBtnTextActive: {
+    color: theme.colors.text,
+  },
+
+  // 미니 지도
+  pickerMapWrap: {
+    height: 220,
+    borderRadius: theme.radius.card,
+    overflow: 'hidden',
+  },
+  pickerMap: {
+    flex: 1,
+  },
+  pin: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: theme.colors.accent,
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+
+  // 위치 결과
+  resultBox: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.card,
+    padding: 12,
+    gap: 4,
+  },
+  resultCoord: {
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+  },
+  resultCountry: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: theme.colors.text,
+  },
+  errorText: {
+    fontSize: 13,
+    color: '#dc2626',
+  },
+
+  // 사진 업로드
   pickBtn: {
     backgroundColor: theme.colors.accent,
     borderRadius: theme.radius.card,
