@@ -38,17 +38,24 @@
 
 ## 현재 단계 ⭐ (자주 바뀌는 부분)
 
-- **지금: Phase 0 — MapLibre 연동 + dev build 전환 + 빈 지도**
-  - 지도 탭에 MapLibre `<Map>` + `<Camera>` 연결 완료 (임시 demotiles 스타일)
-  - dev build(`npx expo run:android`) 필요 — Expo Go로는 지도 뜨지 않음
-  - 다음: Phase 1 Supabase 인증/온보딩 → Phase 2 나라 색칠 지도
 - v1 범위 안에서만 구현할 것. v1.1, v1.2 기능은 아직 만들지 말 것.
-- 환경 셋업 완료: Expo 프로젝트 생성됨, GitHub 연결됨.
+- 환경 셋업 완료: Expo 프로젝트 생성됨, GitHub 연결됨. dev build(`npx expo run:android`) 필요 — Expo Go로는 지도/카메라/위치 등 네이티브 모듈이 안 뜸.
 - **디자인 단계 완료**: 디자인 토큰·네비게이션·화면별 사양 확정 → docs/PRD.md 6~8장에 반영.
-- **C-1 완료**: 나라상세 게시물 사진 그리드(3열, 대표사진, 여러장 배지).
-- **C-2-1a 완료**: `post-media` private Storage 버킷 + RLS 정책 마이그레이션 작성 (설계: docs/PRD.md 9.5).
-- **C-2-1b 완료**: 사진 선택(expo-image-picker) → 리사이즈(expo-image-manipulator, 긴 변 1600px/JPEG 0.8) → post-media 업로드 파이프라인 검증 완료.
-- **C-2-2a 완료**: `posts.city_id` nullable화 마이그레이션 작성(도시는 v1.1로 연기, country_code는 계속 필수). db push는 아직 — 다음: C-2-2b 핀 좌표→나라 자동 역지오코딩.
+- **완료 (C-1 ~ C-2-1c)**:
+  - C-1: 나라상세 게시물 사진 그리드(3열, 대표사진, 여러장 배지)
+  - C-2-1a: `post-media` private Storage 버킷 + RLS 정책 (설계: docs/PRD.md 9.5)
+  - C-2-1b: 사진 선택(expo-image-picker) → 리사이즈(expo-image-manipulator, 긴 변 1600px/JPEG 0.8) → post-media 업로드
+  - C-2-2a: `posts.city_id` nullable화 (db push 완료, `country_code`는 계속 NOT NULL)
+  - C-2-2b: 위치 핀 선택(지도 탭 ↔ 현재 위치, expo-location) + `lib/countryFromCoord.ts`(point-in-polygon)로 나라 자동 파생
+  - C-2-1c: 나라상세 그리드에 signed URL 적용 (`lib/media.ts` — 외부 URL/저장 경로 구분, 1시간 배치 발급)
+- **다음: C-2-3a — `posts.place_label` 컬럼 + 게시물 저장 로직 (아직 시작 안 함)**
+  - 목표: 사진(C-2-1b) + 위치/나라(C-2-2b) + 캡션/공개범위/지역명을 묶어 실제 `posts`/`post_media` INSERT
+  - 진입 시 주의점:
+    - `location`은 PostGIS `POINT(lng lat)` 순서(경도 먼저) — WKT 문자열로 insert
+    - `tempPostId`(C-2-1b와 동일하게 `expo-modules-core`의 `uuid.v4()`)를 그대로 `posts.id`로 재사용해 이미 업로드된 사진 경로와 연결
+    - `post_media.url`엔 **저장 경로**를 저장(signed URL 아님) — 조회 시 `lib/media.ts`의 `resolveMediaUrls`가 signed URL로 교환
+    - 실패 처리는 best-effort(업로드된 사진/insert된 행 정리 시도) — 완벽한 원자성(RPC 트랜잭션)은 나중
+    - `db push`는 사용자 지시 후에만 실행
 
 ## 기능 범위 (단계별 — 범위 밖은 건드리지 말 것)
 
