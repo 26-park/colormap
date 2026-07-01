@@ -16,6 +16,7 @@ import { theme } from '@/constants/theme';
 import { COLOR_PALETTE } from '@/constants/palette';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/auth';
+import { resolveMediaUrls } from '@/lib/media';
 
 const GRID_GAP = 1;
 const NUM_COLS = 3;
@@ -62,35 +63,49 @@ export default function CountryDetailScreen() {
   // 이 나라(cc)의 게시물 그리드 — visibility 판정은 RLS(posts_select_visible)에 맡기고
   // 여기선 country_code만 필터. post_media를 전부 가져와 order_index 오름차순 정렬 후
   // 맨 앞을 대표사진으로 쓰고, 개수로 '여러장' 배지 여부를 판단한다.
+  // 대표사진 url은 시드의 외부 URL이거나 private 버킷 저장 경로일 수 있어, 후처리로
+  // resolveMediaUrls(signed URL 배치 발급, 1시간 만료)를 거친 뒤 화면에 반영한다.
   useEffect(() => {
     if (!cc) return;
     setLoadingPosts(true);
+    let cancelled = false;
 
-    supabase
-      .from('posts')
-      .select('id, post_media(url, order_index)')
-      .eq('country_code', cc)
-      .order('created_at', { ascending: false })
-      .then(({ data, error }) => {
-        if (error) {
-          console.error('posts 조회 실패:', error);
-          setLoadingPosts(false);
-          return;
-        }
-        setPosts(
-          (data ?? []).map((post) => {
-            const media = [...(post.post_media ?? [])].sort(
-              (a, b) => a.order_index - b.order_index,
-            );
-            return {
-              id: post.id,
-              coverUrl: media[0]?.url ?? null,
-              mediaCount: media.length,
-            };
-          }),
-        );
-        setLoadingPosts(false);
+    (async () => {
+      const { data, error } = await supabase
+        .from('posts')
+        .select('id, post_media(url, order_index)')
+        .eq('country_code', cc)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('posts 조회 실패:', error);
+        if (!cancelled) setLoadingPosts(false);
+        return;
+      }
+
+      const rows = (data ?? []).map((post) => {
+        const media = [...(post.post_media ?? [])].sort((a, b) => a.order_index - b.order_index);
+        return { id: post.id, coverUrl: media[0]?.url ?? null, mediaCount: media.length };
       });
+
+      const rawUrls = rows
+        .map((row) => row.coverUrl)
+        .filter((url): url is string => url !== null);
+      const resolved = await resolveMediaUrls(rawUrls);
+
+      if (cancelled) return;
+      setPosts(
+        rows.map((row) => ({
+          ...row,
+          coverUrl: row.coverUrl ? resolved[row.coverUrl] ?? null : null,
+        })),
+      );
+      setLoadingPosts(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [cc]);
 
   async function handleSelectColor(picked: string) {
