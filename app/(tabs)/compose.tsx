@@ -15,11 +15,12 @@ import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { decode } from 'base64-arraybuffer';
 import { uuid } from 'expo-modules-core';
 import * as Location from 'expo-location';
-import { Map, Camera, Marker, type PressEvent } from '@maplibre/maplibre-react-native';
+import { Map, Camera, Marker, GeoJSONSource, Layer, type PressEvent } from '@maplibre/maplibre-react-native';
 import { theme } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/auth';
 import { getCountryFromCoord, type CountryMatch } from '@/lib/countryFromCoord';
+import countriesGeoJSON from '@/assets/geo/countries.json';
 
 const MAX_PHOTOS = 10;
 const MAX_DIMENSION = 1600;
@@ -199,6 +200,10 @@ export default function ComposeScreen() {
           <View style={styles.pickerMapWrap}>
             <Map style={styles.pickerMap} mapStyle={PICKER_MAP_STYLE as any} onPress={handleMapPress}>
               <Camera initialViewState={{ centerCoordinate: [127.5, 36], zoomLevel: 2 }} />
+              <GeoJSONSource id="picker-countries" data={countriesGeoJSON as any} promoteId="cc">
+                <Layer id="picker-country-fill" type="fill" paint={{ 'fill-color': '#CDD2D8', 'fill-opacity': 1 }} />
+                <Layer id="picker-country-border" type="line" paint={{ 'line-color': '#FFFFFF', 'line-width': 0.8 }} />
+              </GeoJSONSource>
               {pickedCoord && (
                 <Marker lngLat={[pickedCoord.lng, pickedCoord.lat]}>
                   <View style={styles.pin} />
