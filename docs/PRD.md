@@ -83,15 +83,16 @@
 
 > 앱 첫 진입 화면은 **메인 지도 탭**(프로필 아님). 하단 탭바: 지도 / +(작성) / 프로필.
 
-1. **첫 기록**: 가입 → username 온보딩 → 메인 지도 → 나라 탭 → 색 자동 칠 → 나라 상세 → +(작성) → **도시 선택(필수)** + 지도 핀 또는 장소 검색으로 위치 지정 → 사진 다중 첨부 + 대표 지정 → 글 → 공개범위 선택(기본 전체공개) → 저장
+1. **첫 기록**: 가입 → username 온보딩 → 메인 지도 → 나라 탭 → 색 자동 칠 → 나라 상세 → +(작성) → 지도 핀 또는 장소 검색으로 위치 지정(필수, 나라는 핀 좌표에서 자동 파생 — 도시 선택은 v1.1로 연기) → 사진 다중 첨부 + 대표 지정 → 글 → 공개범위 선택(기본 전체공개) → 저장
 2. **내 지도 보기**: 메인 지도 탭(나라 단위 색칠된 세계지도) → 나라 탭 → 나라 상세(사진 그리드, 도시별 필터)
 3. **가시성 관리**: 게시물 상세 → 공개범위 변경 / 프로필 → 설정(톱니) → 계정 공개범위 변경
 
 ---
 
-## 5. 장소 기록 방식 (확정)
-- **도시**: 사전 정의된 참조 목록(`cities`)에서 선택 → 지도 색칠·통계가 정확하고 깔끔. (데이터 출처: GeoNames 등)
-- **도시 안 개별 위치**: 자유 핀(위경도). 사용자가 지도 아무 위치나 찍어 게시물 부착.
+## 5. 장소 기록 방식 (확정, 2026-07-01 도시 옵셔널화로 갱신 — C-2-2a)
+- **나라**: 필수. v1은 자유 핀 좌표를 역지오코딩해 `country_code`를 자동 파생한다(C-2-2b) — 사용자가 나라를 직접 고르지 않는다.
+- **도시**: v1.1로 연기. 사전 정의된 참조 목록(`cities`)에서 선택하는 방식 자체는 유지하되, cities 데이터가 충분히 채워질 때까지 `posts.city_id`는 옵셔널(nullable)로 둔다. (데이터 출처: GeoNames 등)
+- **도시 안 개별 위치**: 자유 핀(위경도), 필수. 사용자가 지도 아무 위치나 찍어 게시물 부착.
 - 루트: 같은 도시 내 게시물을 `taken_at`(촬영/방문 시각) 기준으로 정렬해 선으로 잇는다 → **별도 테이블 없이 계산으로 도출**(MVP). 나중에 명시적 루트 편집이 필요하면 `routes` 테이블 추가.
 
 ---
@@ -131,8 +132,8 @@
 - **인스타식 정사각형 사진 그리드**. 나라 상세·프로필이 **같은 컴포넌트를 재사용**한다.
 
 ### 8.4 작성 (+)
-- **도시 선택**: 필수. 앱이 선택된 도시의 `cities.country_code`를 읽어 `posts.country_code`를 자동으로 채운다 — 사용자가 나라를 따로 입력할 필요 없음.
-- **위치 지정**: 지도 핀 + 장소 검색(지오코딩) **둘 다** 지원.
+- **위치 지정**: 지도 핀 + 장소 검색(지오코딩) **둘 다** 지원, 필수. 핀 좌표를 역지오코딩해 `country_code`를 자동으로 채운다(C-2-2b) — 사용자가 나라를 따로 입력할 필요 없음.
+- **도시 선택**: v1.1로 연기(10장 결정 로그 참고). cities 데이터가 채워지면 부활 예정 — 그 전까지 `posts.city_id`는 nullable(C-2-2a).
 - **사진 다중 첨부 + 대표 지정**. (대표 = 그리드/썸네일 커버. `post_media.order_index = 0`을 커버로 사용, 스키마 변경 없음.)
 - **공개범위**: 가로 세그먼트 토글, 기본값 **'전체공개(public)'**.
 
@@ -230,13 +231,14 @@ create table country_visits (
 );
 create index country_visits_user_idx on country_visits (user_id);
 
--- 게시물 (나라 + 도시 + 자유 핀 위치 + 가시성)
--- country_code: 작성 시 city_id → cities.country_code 에서 자동 파생; 사용자 입력 불필요
+-- 게시물 (나라 + 자유 핀 위치 + 가시성; 도시는 v1.1까지 옵셔널 — C-2-2a)
+-- country_code: v1은 location(핀 좌표) 역지오코딩으로 자동 파생(C-2-2b), 계속 NOT NULL.
+-- city_id: nullable — cities 데이터가 채워지는 v1.1에서 도시 기반 파생으로 전환 예정.
 create table posts (
   id           uuid primary key default gen_random_uuid(),
   user_id      uuid not null references profiles(id) on delete cascade,
-  city_id      bigint not null references cities(id),
-  country_code char(2) not null,                 -- cities.country_code 에서 파생
+  city_id      bigint references cities(id),      -- nullable (v1.1까지 옵셔널)
+  country_code char(2) not null,                   -- 핀 좌표에서 자동 파생, 필수
   location     geography(point, 4326) not null,  -- 자유 핀
   caption      text,
   visibility   post_visibility not null default 'public',
@@ -362,6 +364,10 @@ order by p.created_at desc;
 - 도시 참조 데이터 규모 (전 세계 인구 N만 이상 도시? 큐레이션?)
 - 신고/차단 기능 (소셜 앱이면 스토어 심사상 사실상 필요 — v1.1 권장)
 - 푸시 알림 (좋아요/댓글/친구요청) — v1.1
+
+### 결정됨
+
+- **posts.city_id 옵셔널화** (2026-07-01, C-2-2a): cities 테이블이 거의 비어 있어 v1에서 도시 선택을 강제할 수 없음 → `city_id`를 nullable로 변경, `country_code`(나라)는 계속 NOT NULL 유지. 나라는 핀 좌표 역지오코딩으로 자동 파생(C-2-2b). 도시 선택 UI·city_id 기반 파생은 v1.1(cities 데이터가 채워진 뒤) 부활 예정. (5장, 8.4, 9.2 참고)
 
 ### 결정됨 (디자인 단계)
 - **소셜 로그인 범위 확정**: 한국 = 카카오·네이버·Apple·Google·이메일(카카오 우선), 글로벌 = Apple·Google 중심. (8.6 참고)
