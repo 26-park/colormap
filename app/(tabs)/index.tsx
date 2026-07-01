@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { StyleSheet, View, Text, TouchableOpacity, type NativeSyntheticEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import {
   Map,
@@ -47,26 +48,30 @@ export default function MapScreen() {
   const { session } = useAuth();
   const [visitedMap, setVisitedMap] = useState<Record<string, string>>({});
 
-  useEffect(() => {
-    const userId = session?.user.id;
-    if (!userId) return;
+  // 지도 탭이 포커스될 때마다 재조회 — 나라상세에서 색 바꾸고 돌아오면 즉시 반영.
+  // 재조회 중에도 기존 visitedMap을 유지하다 새 데이터 도착 시 교체(깜빡임 없음).
+  useFocusEffect(
+    useCallback(() => {
+      const userId = session?.user.id;
+      if (!userId) return;
 
-    supabase
-      .from('country_visits')
-      .select('country_code, color')
-      .eq('user_id', userId)
-      .then(({ data, error }) => {
-        if (error) {
-          console.error('country_visits 조회 실패:', error);
-          return;
-        }
-        const map: Record<string, string> = {};
-        for (const row of data ?? []) {
-          map[row.country_code] = row.color;
-        }
-        setVisitedMap(map);
-      });
-  }, [session?.user.id]);
+      supabase
+        .from('country_visits')
+        .select('country_code, color')
+        .eq('user_id', userId)
+        .then(({ data, error }) => {
+          if (error) {
+            console.error('country_visits 조회 실패:', error);
+            return;
+          }
+          const map: Record<string, string> = {};
+          for (const row of data ?? []) {
+            map[row.country_code] = row.color;
+          }
+          setVisitedMap(map);
+        });
+    }, [session?.user.id]),
+  );
 
   function handleCountryPress(event: NativeSyntheticEvent<PressEventWithFeatures>) {
     const feature = event.nativeEvent.features[0];
