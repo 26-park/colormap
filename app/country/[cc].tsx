@@ -10,7 +10,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { theme } from '@/constants/theme';
 import { COLOR_PALETTE } from '@/constants/palette';
@@ -31,6 +31,7 @@ type GridPost = {
 export default function CountryDetailScreen() {
   const { cc, nm } = useLocalSearchParams<{ cc: string; nm: string }>();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { session } = useAuth();
   const [color, setColor] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -185,6 +186,15 @@ export default function CountryDetailScreen() {
         )}
       </View>
 
+      {/* 기록 추가 진입점 — 작성 흐름은 나라상세에서만 시작(C-2-3b) */}
+      <Pressable
+        style={[styles.addFab, { bottom: insets.bottom + 16 }]}
+        onPress={() => router.push({ pathname: '/compose', params: { cc, nm } } as any)}
+      >
+        <Text style={styles.addFabPlus}>+</Text>
+        <Text style={styles.addFabText}>기록 추가</Text>
+      </Pressable>
+
       {/* 색 팔레트 바텀시트 — v1: 고정 8색만 (컬러휠/hex는 v1.2 유료) */}
       <Modal
         visible={paletteOpen}
@@ -286,7 +296,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   scrollContent: {
-    paddingBottom: 32,
+    paddingBottom: 96,
   },
   countLabel: {
     fontSize: 14,
@@ -339,6 +349,35 @@ const styles = StyleSheet.create({
     borderWidth: 1.2,
     borderColor: 'rgba(255,255,255,0.9)',
     backgroundColor: 'rgba(0,0,0,0.15)',
+  },
+
+  // 기록 추가 FAB
+  addFab: {
+    position: 'absolute',
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: theme.colors.accent,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderRadius: 28,
+    shadowColor: theme.colors.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  addFabPlus: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#fff',
+    lineHeight: 20,
+  },
+  addFabText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
   },
 
   // 색 팔레트 바텀시트

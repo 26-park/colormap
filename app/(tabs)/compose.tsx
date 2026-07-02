@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,7 +12,7 @@ import {
   type NativeSyntheticEvent,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { decode } from 'base64-arraybuffer';
@@ -21,7 +22,7 @@ import { Map, Camera, Marker, GeoJSONSource, Layer, type PressEvent } from '@map
 import { theme } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/auth';
-import { getCountryFromCoord, type CountryMatch } from '@/lib/countryFromCoord';
+import { getCountryFromCoord, getCountryCentroid, type CountryMatch } from '@/lib/countryFromCoord';
 import { savePost, type PostVisibility } from '@/lib/posts';
 import countriesGeoJSON from '@/assets/geo/countries.json';
 
@@ -38,60 +39,48 @@ const PICKER_MAP_STYLE = {
   ],
 };
 
-type LocationMode = 'map' | 'gps';
+const VISIBILITY_OPTIONS: { value: PostVisibility; label: string }[] = [
+  { value: 'public', label: '전체공개' },
+  { value: 'friends', label: '친구공개' },
+  { value: 'private', label: '비공개' },
+];
 
 type PickedCoord = {
   lng: number;
   lat: number;
 };
 
-type UploadStatus = 'resizing' | 'uploading' | 'done' | 'error';
+type PhotoStatus = 'resizing' | 'uploading' | 'done' | 'error';
 
-type UploadItem = {
-  name: string;
-  status: UploadStatus;
+type PhotoItem = {
+  id: string;
+  uri: string;
+  status: PhotoStatus;
   path?: string;
   error?: string;
 };
 
-function statusLabel(status: UploadStatus) {
-  switch (status) {
-    case 'resizing': return '리사이즈 중…';
-    case 'uploading': return '업로드 중…';
-    case 'done': return '성공';
-    case 'error': return '실패';
-  }
-}
-
-const VISIBILITY_OPTIONS: { value: PostVisibility; label: string }[] = [
-  { value: 'public', label: '전체공개' },
-  { value: 'friends', label: '친구공개' },
-  { value: 'private', label: '나만보기' },
-];
-
-// TODO(C-2-3b): 정식 작성 폼(디자인 확정 시안)으로 교체 + 나라상세 "기록 추가" 진입점 연결.
-// 지금은 위치 선택→나라 파생, 사진 선택→리사이즈→업로드, 저장(posts/post_media INSERT)
-// 파이프라인 검증용 임시 화면. 저장 로직 자체는 lib/posts.ts의 savePost()로 완성됨(C-2-3a).
 export default function ComposeScreen() {
   const { session } = useAuth();
   const router = useRouter();
+  // 나라상세 "기록 추가"에서 넘어온 진입 나라 — 미니맵 초기 카메라 위치용일 뿐,
+  // 최종 country_code는 항상 핀 좌표에서 파생한다(핀이 진실).
+  const { cc: entryCc } = useLocalSearchParams<{ cc?: string; nm?: string }>();
+  const initialCenter = entryCc ? getCountryCentroid(entryCc) : null;
 
-  // ── 위치 선택 (C-2-2b) ──
-  const [locationMode, setLocationMode] = useState<LocationMode>('map');
+  // savePost(C-2-3a)와 사진 업로드 경로가 같은 postId를 공유 — 게시 전에도 미리 생성해둔다.
+  const [postId] = useState(() => uuid.v4());
+
   const [pickedCoord, setPickedCoord] = useState<PickedCoord | null>(null);
   const [countryMatch, setCountryMatch] = useState<CountryMatch | null>(null);
-  const [gpsLoading, setGpsLoading] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
+  const [gpsLoading, setGpsLoading] = useState(false);
 
-  // ── 사진 업로드 (C-2-1b) ──
-  const [items, setItems] = useState<UploadItem[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [tempPostId, setTempPostId] = useState<string | null>(null);
-
-  // ── 저장 (C-2-3a, 임시 입력 — 정식 폼은 C-2-3b) ──
-  const [caption, setCaption] = useState('');
   const [placeLabel, setPlaceLabel] = useState('');
+  const [caption, setCaption] = useState('');
   const [visibility, setVisibility] = useState<PostVisibility>('public');
+
+  const [photos, setPhotos] = useState<PhotoItem[]>([]);
   const [saving, setSaving] = useState(false);
 
   function handleCoordPicked(lng: number, lat: number) {
@@ -112,7 +101,6 @@ export default function ComposeScreen() {
       const permission = await Location.requestForegroundPermissionsAsync();
       if (!permission.granted) {
         setLocationError('위치 권한이 거부됐어요. 지도에서 직접 선택해주세요.');
-        setLocationMode('map');
         return;
       }
 
@@ -121,15 +109,17 @@ export default function ComposeScreen() {
     } catch (err) {
       console.error('[C-2-2b] 현재 위치 획득 실패:', err);
       setLocationError('현재 위치를 가져오지 못했어요. 지도에서 직접 선택해주세요.');
-      setLocationMode('map');
     } finally {
       setGpsLoading(false);
     }
   }
 
-  async function handlePickAndUpload() {
+  async function handleAddPhotos() {
     const userId = session?.user.id;
     if (!userId) return;
+
+    const remaining = MAX_PHOTOS - photos.length;
+    if (remaining <= 0) return;
 
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
@@ -140,23 +130,18 @@ export default function ComposeScreen() {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsMultipleSelection: true,
-      selectionLimit: MAX_PHOTOS,
+      selectionLimit: remaining,
     });
     if (result.canceled || result.assets.length === 0) return;
 
-    const assets = result.assets.slice(0, MAX_PHOTOS);
-    // C-2-3a에서 실제 posts.id로 그대로 재사용 — 그러면 파일 이동 없이 연결됨.
-    const newPostId = uuid.v4();
-    console.log('[C-2-1b] batch start — tempPostId=', newPostId, 'userId=', userId);
-    setTempPostId(newPostId);
-
-    setBusy(true);
-    setItems(assets.map((_, i) => ({ name: `photo-${i}.jpg`, status: 'resizing' })));
+    const assets = result.assets.slice(0, remaining);
+    const newItems: PhotoItem[] = assets.map((asset) => ({ id: uuid.v4(), uri: asset.uri, status: 'resizing' }));
+    setPhotos((prev) => [...prev, ...newItems]);
 
     for (let i = 0; i < assets.length; i++) {
       const asset = assets[i];
-      const name = `photo-${i}.jpg`;
-      const path = `posts/${userId}/${newPostId}/${name}`;
+      const photoId = newItems[i].id;
+      const path = `posts/${userId}/${postId}/${photoId}.jpg`;
 
       try {
         const resizeTo = asset.width >= asset.height
@@ -171,48 +156,43 @@ export default function ComposeScreen() {
         });
         if (!resized.base64) throw new Error('base64 인코딩 실패');
 
-        setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: 'uploading' } : it)));
+        setPhotos((prev) => prev.map((p) => (p.id === photoId ? { ...p, status: 'uploading' } : p)));
 
         const { error } = await supabase.storage
           .from('post-media')
           .upload(path, decode(resized.base64), { contentType: 'image/jpeg' });
         if (error) throw error;
 
-        // 정책 검증용: 본인 폴더(posts/{userId}/...) 아래로 올라가는지 확인
-        console.log('[C-2-1b] uploaded ->', path);
-        setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: 'done', path } : it)));
+        setPhotos((prev) => prev.map((p) => (p.id === photoId ? { ...p, status: 'done', path } : p)));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.error('[C-2-1b] 업로드 실패:', path, message);
-        setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, status: 'error', error: message } : it)));
+        console.error('[C-2-3b] 사진 업로드 실패:', path, message);
+        setPhotos((prev) => prev.map((p) => (p.id === photoId ? { ...p, status: 'error', error: message } : p)));
       }
     }
-
-    setBusy(false);
   }
+
+  async function handleRemovePhoto(photoId: string) {
+    const target = photos.find((p) => p.id === photoId);
+    setPhotos((prev) => prev.filter((p) => p.id !== photoId));
+    if (target?.path) {
+      const { error } = await supabase.storage.from('post-media').remove([target.path]);
+      if (error) console.error('[C-2-3b] 사진 삭제 실패:', error);
+    }
+  }
+
+  const uploadingCount = photos.filter((p) => p.status === 'resizing' || p.status === 'uploading').length;
+  const canPost = !!pickedCoord && !!countryMatch && uploadingCount === 0 && !saving;
 
   async function handleSave() {
     const userId = session?.user.id;
-    if (!userId) return;
-
-    if (!pickedCoord || !countryMatch) {
-      Alert.alert('위치를 선택해주세요', '지도에서 핀을 찍거나 현재 위치를 가져와주세요.');
-      return;
-    }
-    if (items.some((it) => it.status === 'resizing' || it.status === 'uploading')) {
-      Alert.alert('업로드 진행 중', '사진 업로드가 끝난 뒤 저장해주세요.');
-      return;
-    }
-    const donePaths = items.filter((it) => it.status === 'done' && it.path).map((it) => it.path!);
-    if (!tempPostId || donePaths.length === 0) {
-      Alert.alert('사진을 먼저 업로드해주세요', '위 "사진 선택"으로 최소 1장을 올려주세요.');
-      return;
-    }
+    if (!userId || !pickedCoord || !countryMatch) return;
 
     setSaving(true);
     try {
+      const mediaPaths = photos.filter((p) => p.status === 'done' && p.path).map((p) => p.path!);
       await savePost({
-        postId: tempPostId,
+        postId,
         userId,
         countryCode: countryMatch.cc,
         lng: pickedCoord.lng,
@@ -220,7 +200,7 @@ export default function ComposeScreen() {
         caption: caption.trim() || null,
         visibility,
         placeLabel: placeLabel.trim() || null,
-        mediaPaths: donePaths,
+        mediaPaths,
       });
       router.replace({ pathname: '/country/[cc]', params: { cc: countryMatch.cc, nm: countryMatch.nm } } as any);
     } catch (err) {
@@ -232,131 +212,153 @@ export default function ComposeScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.container}>
-        {/* ── 위치 선택 ── */}
-        <Text style={styles.title}>위치 선택 테스트</Text>
-        <Text style={styles.subtitle}>C-2-2b — 핀 선택 → 나라 자동 파생까지만. 저장은 다음 단계(C-2-3).</Text>
+    <SafeAreaView style={styles.safe} edges={['top']}>
+      {/* 헤더 */}
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.headerSideBtn} onPress={() => router.back()}>
+          <Text style={styles.cancelText}>취소</Text>
+        </TouchableOpacity>
 
-        <View style={styles.modeToggle}>
-          <TouchableOpacity
-            style={[styles.modeBtn, locationMode === 'map' && styles.modeBtnActive]}
-            onPress={() => setLocationMode('map')}
-          >
-            <Text style={[styles.modeBtnText, locationMode === 'map' && styles.modeBtnTextActive]}>지도에서 선택</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.modeBtn, locationMode === 'gps' && styles.modeBtnActive]}
-            onPress={() => setLocationMode('gps')}
-          >
-            <Text style={[styles.modeBtnText, locationMode === 'gps' && styles.modeBtnTextActive]}>현재 위치</Text>
+        <View style={styles.headerCenter}>
+          <Text style={styles.headerTitle}>새 기록</Text>
+          {countryMatch ? (
+            <View style={styles.headerSubtitleRow}>
+              <View style={styles.headerDot} />
+              <Text style={styles.headerSubtitle}>{countryMatch.nm}</Text>
+            </View>
+          ) : (
+            <Text style={styles.headerSubtitlePlaceholder}>위치를 선택해주세요</Text>
+          )}
+        </View>
+
+        <TouchableOpacity
+          style={[styles.postBtn, !canPost && styles.postBtnDisabled]}
+          onPress={handleSave}
+          disabled={!canPost}
+        >
+          {saving
+            ? <ActivityIndicator color="#fff" size="small" />
+            : <Text style={styles.postBtnText}>게시</Text>
+          }
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+        {/* ── 위치 ── */}
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>위치</Text>
+          <Text style={styles.sectionHint}>지도를 탭해 위치를 옮기세요</Text>
+        </View>
+
+        <View style={styles.mapWrap}>
+          <Map style={styles.map} mapStyle={PICKER_MAP_STYLE as any} onPress={handleMapPress}>
+            <Camera
+              initialViewState={{ center: initialCenter ?? [127.5, 36], zoom: initialCenter ? 3 : 2 }}
+            />
+            <GeoJSONSource id="compose-countries" data={countriesGeoJSON as any}>
+              <Layer id="compose-country-fill" type="fill" paint={{ 'fill-color': '#CDD2D8', 'fill-opacity': 1 }} />
+              <Layer id="compose-country-border" type="line" paint={{ 'line-color': '#FFFFFF', 'line-width': 0.8 }} />
+            </GeoJSONSource>
+            {pickedCoord && (
+              <Marker lngLat={[pickedCoord.lng, pickedCoord.lat]}>
+                <View style={styles.pin} />
+              </Marker>
+            )}
+          </Map>
+
+          <TouchableOpacity style={styles.gpsChip} onPress={handleUseCurrentLocation} disabled={gpsLoading}>
+            {gpsLoading
+              ? <ActivityIndicator size="small" color={theme.colors.accent} />
+              : <Text style={styles.gpsChipText}>현재 위치</Text>
+            }
           </TouchableOpacity>
         </View>
 
         {locationError && <Text style={styles.errorText}>{locationError}</Text>}
-
-        {locationMode === 'map' ? (
-          <View style={styles.pickerMapWrap}>
-            <Map style={styles.pickerMap} mapStyle={PICKER_MAP_STYLE as any} onPress={handleMapPress}>
-              <Camera initialViewState={{ centerCoordinate: [127.5, 36], zoomLevel: 2 }} />
-              <GeoJSONSource id="picker-countries" data={countriesGeoJSON as any} promoteId="cc">
-                <Layer id="picker-country-fill" type="fill" paint={{ 'fill-color': '#CDD2D8', 'fill-opacity': 1 }} />
-                <Layer id="picker-country-border" type="line" paint={{ 'line-color': '#FFFFFF', 'line-width': 0.8 }} />
-              </GeoJSONSource>
-              {pickedCoord && (
-                <Marker lngLat={[pickedCoord.lng, pickedCoord.lat]}>
-                  <View style={styles.pin} />
-                </Marker>
-              )}
-            </Map>
-          </View>
-        ) : (
-          <TouchableOpacity style={styles.pickBtn} onPress={handleUseCurrentLocation} disabled={gpsLoading}>
-            {gpsLoading
-              ? <ActivityIndicator color="#fff" />
-              : <Text style={styles.pickBtnText}>현재 위치 가져오기</Text>
-            }
-          </TouchableOpacity>
+        {pickedCoord && !countryMatch && !locationError && (
+          <Text style={styles.errorText}>나라를 찾을 수 없어요. 다른 위치를 선택해주세요.</Text>
         )}
 
-        {pickedCoord && (
-          <View style={styles.resultBox}>
-            <Text style={styles.resultCoord}>lat {pickedCoord.lat.toFixed(5)}, lng {pickedCoord.lng.toFixed(5)}</Text>
-            {countryMatch
-              ? <Text style={styles.resultCountry}>{countryMatch.nm} / {countryMatch.cc}</Text>
-              : <Text style={styles.errorText}>위치를 다시 선택해주세요 (나라를 찾을 수 없어요)</Text>
-            }
-          </View>
-        )}
-
-        <View style={styles.divider} />
-
-        {/* ── 사진 업로드 ── */}
-        <Text style={styles.title}>사진 업로드 테스트</Text>
-        <Text style={styles.subtitle}>C-2-1b — 선택 → 리사이즈 → 업로드까지만. DB 저장은 다음 단계(C-2-3).</Text>
-
-        <TouchableOpacity style={styles.pickBtn} onPress={handlePickAndUpload} disabled={busy}>
-          {busy
-            ? <ActivityIndicator color="#fff" />
-            : <Text style={styles.pickBtnText}>사진 선택 (최대 {MAX_PHOTOS}장)</Text>
-          }
-        </TouchableOpacity>
-
-        <View style={styles.list}>
-          {items.map((item, i) => (
-            <View key={i} style={styles.itemRow}>
-              <Text style={styles.itemName}>{item.name}</Text>
-              <Text style={[styles.itemStatus, item.status === 'error' && styles.itemStatusError]}>
-                {statusLabel(item.status)}
-              </Text>
-              {item.path && <Text style={styles.itemPath}>{item.path}</Text>}
-              {item.error && <Text style={styles.itemPath}>{item.error}</Text>}
-            </View>
-          ))}
-        </View>
-
-        <View style={styles.divider} />
-
-        {/* ── 저장 (C-2-3a) ── */}
-        <Text style={styles.title}>저장 테스트</Text>
-        <Text style={styles.subtitle}>C-2-3a — 위/사진 값 그대로 posts+post_media 저장. 정식 폼은 다음 단계(C-2-3b).</Text>
-
+        {/* ── 지역명 ── */}
         <TextInput
           style={styles.textInput}
-          placeholder="캡션"
-          placeholderTextColor={theme.colors.textSecondary}
-          value={caption}
-          onChangeText={setCaption}
-          multiline
-        />
-        <TextInput
-          style={styles.textInput}
-          placeholder="지역명 (예: 산토리니 오이아)"
-          placeholderTextColor={theme.colors.textSecondary}
+          placeholder="이 위치의 이름 (선택)"
+          placeholderTextColor={theme.colors.placeholder}
           value={placeLabel}
           onChangeText={setPlaceLabel}
         />
 
-        <View style={styles.modeToggle}>
+        {/* ── 사진 ── */}
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>사진</Text>
+          <Text style={styles.photoCount}>
+            <Text style={styles.photoCountNumber}>{photos.length}</Text> / {MAX_PHOTOS}
+          </Text>
+        </View>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.photoStrip}
+        >
+          {photos.length < MAX_PHOTOS && (
+            <TouchableOpacity style={styles.addPhotoTile} onPress={handleAddPhotos}>
+              <Text style={styles.addPhotoPlus}>+</Text>
+              <Text style={styles.addPhotoLabel}>사진 추가</Text>
+            </TouchableOpacity>
+          )}
+          {photos.map((photo, index) => (
+            <View key={photo.id} style={styles.photoTile}>
+              <Image source={{ uri: photo.uri }} style={styles.photoImage} />
+              {index === 0 && (
+                <View style={styles.coverBadge}>
+                  <Text style={styles.coverBadgeText}>대표</Text>
+                </View>
+              )}
+              {(photo.status === 'resizing' || photo.status === 'uploading') && (
+                <View style={styles.photoOverlay}>
+                  <ActivityIndicator color="#fff" size="small" />
+                </View>
+              )}
+              {photo.status === 'error' && (
+                <View style={styles.photoOverlay}>
+                  <Text style={styles.photoErrorText}>실패</Text>
+                </View>
+              )}
+              <TouchableOpacity style={styles.removeBtn} onPress={() => handleRemovePhoto(photo.id)}>
+                <Text style={styles.removeBtnText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </ScrollView>
+
+        {/* ── 글 ── */}
+        <Text style={styles.sectionTitle}>글</Text>
+        <TextInput
+          style={styles.captionInput}
+          placeholder="이 곳에서의 기록을 남겨보세요"
+          placeholderTextColor={theme.colors.placeholder}
+          value={caption}
+          onChangeText={setCaption}
+          multiline
+          textAlignVertical="top"
+        />
+
+        {/* ── 공개 범위 ── */}
+        <Text style={styles.sectionTitle}>공개 범위</Text>
+        <View style={styles.visibilityToggle}>
           {VISIBILITY_OPTIONS.map((opt) => (
             <TouchableOpacity
               key={opt.value}
-              style={[styles.modeBtn, visibility === opt.value && styles.modeBtnActive]}
+              style={[styles.visibilityBtn, visibility === opt.value && styles.visibilityBtnActive]}
               onPress={() => setVisibility(opt.value)}
             >
-              <Text style={[styles.modeBtnText, visibility === opt.value && styles.modeBtnTextActive]}>
+              <Text style={[styles.visibilityBtnText, visibility === opt.value && styles.visibilityBtnTextActive]}>
                 {opt.label}
               </Text>
             </TouchableOpacity>
           ))}
         </View>
-
-        <TouchableOpacity style={styles.pickBtn} onPress={handleSave} disabled={saving || busy}>
-          {saving
-            ? <ActivityIndicator color="#fff" />
-            : <Text style={styles.pickBtnText}>저장</Text>
-          }
-        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
@@ -367,58 +369,104 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background,
   },
-  container: {
-    padding: 20,
-    gap: 16,
+
+  // 헤더
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
   },
-  title: {
-    fontSize: 20,
+  headerSideBtn: {
+    minWidth: 44,
+  },
+  cancelText: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: theme.colors.textSecondary,
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  headerTitle: {
+    fontSize: 16,
     fontWeight: '700',
     color: theme.colors.text,
   },
-  subtitle: {
-    fontSize: 13,
+  headerSubtitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 2,
+  },
+  headerDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: theme.colors.accent,
+  },
+  headerSubtitle: {
+    fontSize: 12,
     color: theme.colors.textSecondary,
   },
-  divider: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: theme.colors.border,
-    marginVertical: 4,
+  headerSubtitlePlaceholder: {
+    fontSize: 12,
+    color: theme.colors.placeholder,
+    marginTop: 2,
+  },
+  postBtn: {
+    minWidth: 64,
+    backgroundColor: theme.colors.accent,
+    borderRadius: 20,
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  postBtnDisabled: {
+    opacity: 0.4,
+  },
+  postBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
   },
 
-  // 위치 모드 토글
-  modeToggle: {
+  container: {
+    padding: 20,
+    paddingBottom: 40,
+    gap: 14,
+  },
+
+  sectionHeaderRow: {
     flexDirection: 'row',
-    backgroundColor: '#f3f4f6',
-    borderRadius: theme.radius.card,
-    padding: 3,
-    gap: 3,
-  },
-  modeBtn: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: theme.radius.card,
     alignItems: 'center',
+    justifyContent: 'space-between',
   },
-  modeBtnActive: {
-    backgroundColor: '#fff',
-  },
-  modeBtnText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: theme.colors.textSecondary,
-  },
-  modeBtnTextActive: {
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
     color: theme.colors.text,
   },
+  sectionHint: {
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+  },
+  errorText: {
+    fontSize: 13,
+    color: theme.colors.error,
+  },
 
-  // 미니 지도
-  pickerMapWrap: {
-    height: 220,
+  // 위치 미니맵
+  mapWrap: {
+    height: 200,
     borderRadius: theme.radius.card,
     overflow: 'hidden',
+    position: 'relative',
   },
-  pickerMap: {
+  map: {
     flex: 1,
   },
   pin: {
@@ -429,76 +477,156 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#fff',
   },
-
-  // 위치 결과
-  resultBox: {
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: theme.radius.card,
-    padding: 12,
-    gap: 4,
+  gpsChip: {
+    position: 'absolute',
+    right: 10,
+    bottom: 10,
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 4,
   },
-  resultCoord: {
+  gpsChipText: {
     fontSize: 12,
-    color: theme.colors.textSecondary,
-  },
-  resultCountry: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: theme.colors.text,
-  },
-  errorText: {
-    fontSize: 13,
-    color: '#dc2626',
-  },
-
-  // 사진 업로드
-  pickBtn: {
-    backgroundColor: theme.colors.accent,
-    borderRadius: theme.radius.card,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  pickBtnText: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  list: {
-    gap: 10,
-  },
-  itemRow: {
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: theme.radius.card,
-    padding: 12,
-    gap: 4,
-  },
-  itemName: {
-    fontSize: 14,
     fontWeight: '600',
-    color: theme.colors.text,
-  },
-  itemStatus: {
-    fontSize: 13,
     color: theme.colors.accent,
   },
-  itemStatusError: {
-    color: '#dc2626',
-  },
-  itemPath: {
-    fontSize: 11,
-    color: theme.colors.textSecondary,
-  },
 
-  // 저장 (C-2-3a)
+  // 지역명 / 글 입력
   textInput: {
     borderWidth: 1,
     borderColor: theme.colors.border,
-    borderRadius: theme.radius.card,
+    borderRadius: theme.radius.input,
     paddingHorizontal: 14,
     paddingVertical: 10,
     fontSize: 14,
     color: theme.colors.text,
+  },
+  captionInput: {
+    minHeight: 110,
+    backgroundColor: '#f9fafb',
+    borderRadius: theme.radius.card,
+    padding: 14,
+    fontSize: 14,
+    color: theme.colors.text,
+  },
+
+  // 사진 스트립
+  photoCount: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: theme.colors.textSecondary,
+  },
+  photoCountNumber: {
+    color: theme.colors.accent,
+  },
+  photoStrip: {
+    gap: 10,
+    paddingRight: 4,
+  },
+  addPhotoTile: {
+    width: 88,
+    height: 88,
+    borderRadius: theme.radius.input,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: theme.colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addPhotoPlus: {
+    fontSize: 22,
+    color: theme.colors.accent,
+    fontWeight: '400',
+    lineHeight: 24,
+  },
+  addPhotoLabel: {
+    fontSize: 11,
+    color: theme.colors.textSecondary,
+    marginTop: 2,
+  },
+  photoTile: {
+    width: 88,
+    height: 88,
+    borderRadius: theme.radius.input,
+    overflow: 'hidden',
+    backgroundColor: '#f3f4f6',
+    position: 'relative',
+  },
+  photoImage: {
+    width: '100%',
+    height: '100%',
+  },
+  coverBadge: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    backgroundColor: theme.colors.accent,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  coverBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  photoOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoErrorText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  removeBtn: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  removeBtnText: {
+    fontSize: 11,
+    color: '#fff',
+    fontWeight: '700',
+  },
+
+  // 공개 범위
+  visibilityToggle: {
+    flexDirection: 'row',
+    backgroundColor: '#f3f4f6',
+    borderRadius: theme.radius.card,
+    padding: 4,
+    gap: 4,
+  },
+  visibilityBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: theme.radius.input,
+    alignItems: 'center',
+  },
+  visibilityBtnActive: {
+    backgroundColor: theme.colors.accent,
+  },
+  visibilityBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: theme.colors.textSecondary,
+  },
+  visibilityBtnTextActive: {
+    color: '#fff',
   },
 });

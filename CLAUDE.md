@@ -20,10 +20,13 @@
 - **네비게이션**: Expo Router (파일 기반)
 - **백엔드/DB**: Supabase (Postgres + PostGIS)
 - **지도**: `@maplibre/maplibre-react-native` **v11** — New Architecture 전용, Feature State로 나라 색칠 적합, 무료
-  - v11 API 주의 (v10과 크게 다름):
+  - v11 API 주의 (v10과 크게 다름, 설치 버전 11.3.6 기준 — 아래는 `node_modules` 실제 타입으로 검증됨):
     - 지도: `<Map mapStyle={...}>` (구 `MapView`)
-    - 카메라: `<Camera initialViewState={{centerCoordinate, zoomLevel}}>` (구 `defaultSettings`)
-    - 소스: `<GeoJSONSource id data promoteId>` (구 `ShapeSource` + `shape` prop)
+    - 카메라: `<Camera initialViewState={{center, zoom}}>` (구 `defaultSettings`)
+      - ⚠️ **`centerCoordinate`/`zoomLevel` 아님 — `center`/`zoom`.** `center`는 `LngLat` 튜플 `[lng, lat]`.
+        2026-07-02(C-2-3b) 실기기에서 미니맵이 진입 나라로 안 움직이는 버그로 발견 — 잘못된 키는 에러 없이 조용히 무시되고 카메라가 그냥 기본 위치에 머문다. `tsc`가 이미 `'centerCoordinate' does not exist` 에러를 냈었는데 "구버전 타입 정의 이슈"로 잘못 판단하고 넘어갔던 것 — **이 라이브러리는 앞으로 tsc 에러를 타입 노이즈로 넘기지 말고 실제 API 불일치로 의심할 것.**
+    - 소스: `<GeoJSONSource id data>` (구 `ShapeSource` + `shape` prop)
+      - ⚠️ `promoteId`는 설치된 11.3.6의 `GeoJSONSourceProps`에 없음(타입에도 없음, 넘겨도 조용히 무시). 현재 나라 색칠은 feature-state가 아니라 `fill-color`의 `['match', ['get','cc'], ...]` 표현식으로 GeoJSON properties를 직접 읽어서 동작 — 그래서 `promoteId` 없어도 영향 없음. **feature-state 기반으로 바꾸게 되면 이 버전에서 가능한 대체 방법부터 재확인.**
     - 레이어: `<Layer id type="fill"|"line"|... paint={{...}}>` 단일 컴포넌트 (구 `FillLayer`/`LineLayer`)
     - paint 키는 Style Spec 형식: `'fill-color'`, `'line-width'` 등 (camelCase 아님)
     - `style` prop은 deprecated → `paint`/`layout` 사용

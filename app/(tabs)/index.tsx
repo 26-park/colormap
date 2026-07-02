@@ -90,13 +90,13 @@ export default function MapScreen() {
         mapStyle={MAP_STYLE as any} // TODO: StyleSpecification 타입으로 교체
       >
         <Camera
-          initialViewState={{ centerCoordinate: [0, 20], zoomLevel: 1 }}
+          initialViewState={{ center: [0, 20], zoom: 1 }}
         />
-        {/* promoteId='cc': 다음 Phase feature-state가 cc로 키되게 미리 설정 */}
+        {/* 색칠은 feature-state가 아니라 fill-color match(['get','cc'])로 처리 —
+            promoteId는 설치된 v11.3.6 GeoJSONSourceProps에 없어 넣어도 무시된다 (CLAUDE.md 참고) */}
         <GeoJSONSource
           id="countries"
           data={countriesGeoJSON as any} // TODO: FeatureCollection 타입으로 교체
-          promoteId="cc"
           onPress={handleCountryPress}
         >
           <Layer
@@ -140,16 +140,6 @@ export default function MapScreen() {
           <Text style={styles.zoomBtnText}>−</Text>
         </TouchableOpacity>
       </View>
-
-      {/* ── 작성 FAB ── */}
-      {/* TODO(C-2-3): 지도→나라상세→기록추가 정식 흐름으로 교체. 지금은 C-2-1b 업로드 테스트용 임시 연결. */}
-      <TouchableOpacity
-        style={[styles.fab, { bottom: insets.bottom + 20 }]}
-        activeOpacity={0.85}
-        onPress={() => router.push('/compose')}
-      >
-        <Text style={styles.fabText}>+</Text>
-      </TouchableOpacity>
     </View>
   );
 }
@@ -247,28 +237,5 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     backgroundColor: theme.colors.border,
     marginHorizontal: 8,
-  },
-
-  // ── FAB ──
-  fab: {
-    position: 'absolute',
-    alignSelf: 'center',
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: theme.colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: theme.colors.accent,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  fabText: {
-    fontSize: 28,
-    color: '#FFFFFF',
-    fontWeight: '400',
-    lineHeight: 32,
   },
 });
