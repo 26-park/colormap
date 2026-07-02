@@ -234,12 +234,14 @@ create index country_visits_user_idx on country_visits (user_id);
 -- 게시물 (나라 + 자유 핀 위치 + 가시성; 도시는 v1.1까지 옵셔널 — C-2-2a)
 -- country_code: v1은 location(핀 좌표) 역지오코딩으로 자동 파생(C-2-2b), 계속 NOT NULL.
 -- city_id: nullable — cities 데이터가 채워지는 v1.1에서 도시 기반 파생으로 전환 예정.
+-- place_label: 자유 지역명(인스타 위치태그식), 옵셔널 — cities 구조화 대신 채택(C-2-3a).
 create table posts (
   id           uuid primary key default gen_random_uuid(),
   user_id      uuid not null references profiles(id) on delete cascade,
   city_id      bigint references cities(id),      -- nullable (v1.1까지 옵셔널)
   country_code char(2) not null,                   -- 핀 좌표에서 자동 파생, 필수
   location     geography(point, 4326) not null,  -- 자유 핀
+  place_label  text,                              -- 자유 지역명, 옵셔널
   caption      text,
   visibility   post_visibility not null default 'public',
   taken_at     timestamptz,                       -- 루트 정렬 기준
@@ -368,6 +370,7 @@ order by p.created_at desc;
 ### 결정됨
 
 - **posts.city_id 옵셔널화** (2026-07-01, C-2-2a): cities 테이블이 거의 비어 있어 v1에서 도시 선택을 강제할 수 없음 → `city_id`를 nullable로 변경, `country_code`(나라)는 계속 NOT NULL 유지. 나라는 핀 좌표 역지오코딩으로 자동 파생(C-2-2b). 도시 선택 UI·city_id 기반 파생은 v1.1(cities 데이터가 채워진 뒤) 부활 예정. (5장, 8.4, 9.2 참고)
+- **posts.place_label 추가** (2026-07-02, C-2-3a): 도시는 구조적 `cities` 엔티티로 만들지 않기로 결정. 위치는 핀(`location`)+나라(`country_code`) 필수 + 자유 지역명(`place_label`) 옵셔널로 남긴다(인스타 위치태그식). 필요해지면 나중에 지오코딩 기반 정규화로 업그레이드할 수 있으나, `cities` 데이터 자체를 채우는 방향은 가지 않는다. (9.2 참고)
 
 ### 결정됨 (디자인 단계)
 - **소셜 로그인 범위 확정**: 한국 = 카카오·네이버·Apple·Google·이메일(카카오 우선), 글로벌 = Apple·Google 중심. (8.6 참고)

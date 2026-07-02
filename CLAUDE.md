@@ -48,14 +48,11 @@
   - C-2-2a: `posts.city_id` nullable화 (db push 완료, `country_code`는 계속 NOT NULL)
   - C-2-2b: 위치 핀 선택(지도 탭 ↔ 현재 위치, expo-location) + `lib/countryFromCoord.ts`(point-in-polygon)로 나라 자동 파생
   - C-2-1c: 나라상세 그리드에 signed URL 적용 (`lib/media.ts` — 외부 URL/저장 경로 구분, 1시간 배치 발급)
-- **다음: C-2-3a — `posts.place_label` 컬럼 + 게시물 저장 로직 (아직 시작 안 함)**
-  - 목표: 사진(C-2-1b) + 위치/나라(C-2-2b) + 캡션/공개범위/지역명을 묶어 실제 `posts`/`post_media` INSERT
-  - 진입 시 주의점:
-    - `location`은 PostGIS `POINT(lng lat)` 순서(경도 먼저) — WKT 문자열로 insert
-    - `tempPostId`(C-2-1b와 동일하게 `expo-modules-core`의 `uuid.v4()`)를 그대로 `posts.id`로 재사용해 이미 업로드된 사진 경로와 연결
-    - `post_media.url`엔 **저장 경로**를 저장(signed URL 아님) — 조회 시 `lib/media.ts`의 `resolveMediaUrls`가 signed URL로 교환
-    - 실패 처리는 best-effort(업로드된 사진/insert된 행 정리 시도) — 완벽한 원자성(RPC 트랜잭션)은 나중
-    - `db push`는 사용자 지시 후에만 실행
+  - C-2-3a: `posts.place_label` 컬럼(nullable, 자유 지역명) + `lib/posts.ts`의 `savePost()`로 사진+위치/나라+캡션/공개범위/지역명을 묶어 `posts`/`post_media` INSERT. 정식 폼 UI는 아직(C-2-3b) — compose 테스트 화면에 최소 입력만 임시로 붙여 검증.
+    - **결정**: 도시는 구조적 `cities` 엔티티로 만들지 않는다. 위치는 핀(`location`)+나라(`country_code`) 필수 + 자유 지역명(`place_label`) 옵셔널. 필요 시 나중에 지오코딩으로 정규화 업그레이드(cities 자체 구축은 안 함).
+- **다음: C-2-3b — 정식 작성 폼 UI (아직 시작 안 함)**
+  - 목표: compose 테스트 화면의 임시 입력(캡션/공개범위/지역명 TextInput)을 디자인 확정된 정식 폼으로 교체, 나라상세 화면의 "기록 추가" 진입점과 연결
+  - `savePost()`(`lib/posts.ts`) 저장 로직 자체는 C-2-3a에서 완료 — 재사용
 
 ## 기능 범위 (단계별 — 범위 밖은 건드리지 말 것)
 

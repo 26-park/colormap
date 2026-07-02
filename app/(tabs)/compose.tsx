@@ -5,11 +5,13 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
   type NativeSyntheticEvent,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { decode } from 'base64-arraybuffer';
@@ -20,6 +22,7 @@ import { theme } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/auth';
 import { getCountryFromCoord, type CountryMatch } from '@/lib/countryFromCoord';
+import { savePost, type PostVisibility } from '@/lib/posts';
 import countriesGeoJSON from '@/assets/geo/countries.json';
 
 const MAX_PHOTOS = 10;
@@ -60,10 +63,18 @@ function statusLabel(status: UploadStatus) {
   }
 }
 
-// TODO(C-2-3): 정식 작성 폼(캡션/공개범위 + posts/post_media 저장)으로 교체.
-// 지금은 위치 선택→나라 파생, 사진 선택→리사이즈→업로드 파이프라인 검증용 임시 화면.
+const VISIBILITY_OPTIONS: { value: PostVisibility; label: string }[] = [
+  { value: 'public', label: '전체공개' },
+  { value: 'friends', label: '친구공개' },
+  { value: 'private', label: '나만보기' },
+];
+
+// TODO(C-2-3b): 정식 작성 폼(디자인 확정 시안)으로 교체 + 나라상세 "기록 추가" 진입점 연결.
+// 지금은 위치 선택→나라 파생, 사진 선택→리사이즈→업로드, 저장(posts/post_media INSERT)
+// 파이프라인 검증용 임시 화면. 저장 로직 자체는 lib/posts.ts의 savePost()로 완성됨(C-2-3a).
 export default function ComposeScreen() {
   const { session } = useAuth();
+  const router = useRouter();
 
   // ── 위치 선택 (C-2-2b) ──
   const [locationMode, setLocationMode] = useState<LocationMode>('map');
@@ -75,6 +86,13 @@ export default function ComposeScreen() {
   // ── 사진 업로드 (C-2-1b) ──
   const [items, setItems] = useState<UploadItem[]>([]);
   const [busy, setBusy] = useState(false);
+  const [tempPostId, setTempPostId] = useState<string | null>(null);
+
+  // ── 저장 (C-2-3a, 임시 입력 — 정식 폼은 C-2-3b) ──
+  const [caption, setCaption] = useState('');
+  const [placeLabel, setPlaceLabel] = useState('');
+  const [visibility, setVisibility] = useState<PostVisibility>('public');
+  const [saving, setSaving] = useState(false);
 
   function handleCoordPicked(lng: number, lat: number) {
     setLocationError(null);
@@ -127,9 +145,10 @@ export default function ComposeScreen() {
     if (result.canceled || result.assets.length === 0) return;
 
     const assets = result.assets.slice(0, MAX_PHOTOS);
-    // C-2-3에서 실제 posts.id로 그대로 재사용 예정 — 그러면 파일 이동 없이 연결됨.
-    const tempPostId = uuid.v4();
-    console.log('[C-2-1b] batch start — tempPostId=', tempPostId, 'userId=', userId);
+    // C-2-3a에서 실제 posts.id로 그대로 재사용 — 그러면 파일 이동 없이 연결됨.
+    const newPostId = uuid.v4();
+    console.log('[C-2-1b] batch start — tempPostId=', newPostId, 'userId=', userId);
+    setTempPostId(newPostId);
 
     setBusy(true);
     setItems(assets.map((_, i) => ({ name: `photo-${i}.jpg`, status: 'resizing' })));
@@ -137,7 +156,7 @@ export default function ComposeScreen() {
     for (let i = 0; i < assets.length; i++) {
       const asset = assets[i];
       const name = `photo-${i}.jpg`;
-      const path = `posts/${userId}/${tempPostId}/${name}`;
+      const path = `posts/${userId}/${newPostId}/${name}`;
 
       try {
         const resizeTo = asset.width >= asset.height
@@ -170,6 +189,46 @@ export default function ComposeScreen() {
     }
 
     setBusy(false);
+  }
+
+  async function handleSave() {
+    const userId = session?.user.id;
+    if (!userId) return;
+
+    if (!pickedCoord || !countryMatch) {
+      Alert.alert('위치를 선택해주세요', '지도에서 핀을 찍거나 현재 위치를 가져와주세요.');
+      return;
+    }
+    if (items.some((it) => it.status === 'resizing' || it.status === 'uploading')) {
+      Alert.alert('업로드 진행 중', '사진 업로드가 끝난 뒤 저장해주세요.');
+      return;
+    }
+    const donePaths = items.filter((it) => it.status === 'done' && it.path).map((it) => it.path!);
+    if (!tempPostId || donePaths.length === 0) {
+      Alert.alert('사진을 먼저 업로드해주세요', '위 "사진 선택"으로 최소 1장을 올려주세요.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await savePost({
+        postId: tempPostId,
+        userId,
+        countryCode: countryMatch.cc,
+        lng: pickedCoord.lng,
+        lat: pickedCoord.lat,
+        caption: caption.trim() || null,
+        visibility,
+        placeLabel: placeLabel.trim() || null,
+        mediaPaths: donePaths,
+      });
+      router.replace({ pathname: '/country/[cc]', params: { cc: countryMatch.cc, nm: countryMatch.nm } } as any);
+    } catch (err) {
+      console.error('[C-2-3a] 저장 실패:', err);
+      Alert.alert('저장 실패', '잠시 후 다시 시도해주세요.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -255,6 +314,49 @@ export default function ComposeScreen() {
             </View>
           ))}
         </View>
+
+        <View style={styles.divider} />
+
+        {/* ── 저장 (C-2-3a) ── */}
+        <Text style={styles.title}>저장 테스트</Text>
+        <Text style={styles.subtitle}>C-2-3a — 위/사진 값 그대로 posts+post_media 저장. 정식 폼은 다음 단계(C-2-3b).</Text>
+
+        <TextInput
+          style={styles.textInput}
+          placeholder="캡션"
+          placeholderTextColor={theme.colors.textSecondary}
+          value={caption}
+          onChangeText={setCaption}
+          multiline
+        />
+        <TextInput
+          style={styles.textInput}
+          placeholder="지역명 (예: 산토리니 오이아)"
+          placeholderTextColor={theme.colors.textSecondary}
+          value={placeLabel}
+          onChangeText={setPlaceLabel}
+        />
+
+        <View style={styles.modeToggle}>
+          {VISIBILITY_OPTIONS.map((opt) => (
+            <TouchableOpacity
+              key={opt.value}
+              style={[styles.modeBtn, visibility === opt.value && styles.modeBtnActive]}
+              onPress={() => setVisibility(opt.value)}
+            >
+              <Text style={[styles.modeBtnText, visibility === opt.value && styles.modeBtnTextActive]}>
+                {opt.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <TouchableOpacity style={styles.pickBtn} onPress={handleSave} disabled={saving || busy}>
+          {saving
+            ? <ActivityIndicator color="#fff" />
+            : <Text style={styles.pickBtnText}>저장</Text>
+          }
+        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
@@ -387,5 +489,16 @@ const styles = StyleSheet.create({
   itemPath: {
     fontSize: 11,
     color: theme.colors.textSecondary,
+  },
+
+  // 저장 (C-2-3a)
+  textInput: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.card,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: theme.colors.text,
   },
 });
