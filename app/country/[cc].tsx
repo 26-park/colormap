@@ -169,7 +169,11 @@ export default function CountryDetailScreen() {
               onLayout={(e) => setGridWidth(e.nativeEvent.layout.width)}
             >
               {posts.map((post) => (
-                <View key={post.id} style={[styles.cell, { width: cellSize, height: cellSize }]}>
+                <Pressable
+                  key={post.id}
+                  style={[styles.cell, { width: cellSize, height: cellSize }]}
+                  onPress={() => router.push({ pathname: '/post/[id]', params: { id: post.id } } as any)}
+                >
                   {post.coverUrl && (
                     <Image source={{ uri: post.coverUrl }} style={styles.cellImage} resizeMode="cover" />
                   )}
@@ -179,7 +183,7 @@ export default function CountryDetailScreen() {
                       <View style={styles.multiBadgeSquareFront} />
                     </View>
                   )}
-                </View>
+                </Pressable>
               ))}
             </View>
           </ScrollView>

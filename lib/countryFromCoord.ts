@@ -49,3 +49,8 @@ export function getCountryCentroid(cc: string): [number, number] | null {
 
   return count === 0 ? null : [sumX / count, sumY / count];
 }
+
+// cc → 나라 이름(nm). 같은 cc가 여러 피처로 중복되는 나라(SO/CY/AU 등)는 첫 매치만 사용.
+export function getCountryName(cc: string): string | null {
+  return countries.features.find((f) => f.properties.cc === cc)?.properties.nm ?? null;
+}
