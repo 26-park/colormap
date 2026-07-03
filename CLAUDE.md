@@ -44,19 +44,21 @@
 - v1 범위 안에서만 구현할 것. v1.1, v1.2 기능은 아직 만들지 말 것.
 - 환경 셋업 완료: Expo 프로젝트 생성됨, GitHub 연결됨. dev build(`npx expo run:android`) 필요 — Expo Go로는 지도/카메라/위치 등 네이티브 모듈이 안 뜸.
 - **디자인 단계 완료**: 디자인 토큰·네비게이션·화면별 사양 확정 → docs/PRD.md 6~8장에 반영.
-- **완료 (C-1 ~ C-2-3a)**:
+- **완료 (C-1 ~ Phase E)**:
   - C-1: 나라상세 게시물 사진 그리드(3열, 대표사진, 여러장 배지)
   - C-2-1a: `post-media` private Storage 버킷 + RLS 정책 (설계: docs/PRD.md 9.5)
   - C-2-1b: 사진 선택(expo-image-picker) → 리사이즈(expo-image-manipulator, 긴 변 1600px/JPEG 0.8) → post-media 업로드
   - C-2-2a: `posts.city_id` nullable화 (db push 완료, `country_code`는 계속 NOT NULL)
   - C-2-2b: 위치 핀 선택(지도 탭 ↔ 현재 위치, expo-location) + `lib/countryFromCoord.ts`(point-in-polygon)로 나라 자동 파생
   - C-2-1c: 나라상세 그리드에 signed URL 적용 (`lib/media.ts` — 외부 URL/저장 경로 구분, 1시간 배치 발급)
-  - C-2-3a: `posts.place_label` 컬럼(db push 완료) + `lib/posts.ts`의 `savePost()`로 사진+위치/나라+캡션/공개범위/지역명을 묶어 `posts`/`post_media` INSERT. compose 테스트 화면의 임시 입력으로 실기기 검증 완료(저장 → posts/post_media 행 생성 → 나라상세 그리드에 실사진 렌더 확인). 정식 폼 UI는 아직(C-2-3b).
+  - C-2-3a: `posts.place_label` 컬럼(db push 완료) + `lib/posts.ts`의 `savePost()`로 사진+위치/나라+캡션/공개범위/지역명을 묶어 `posts`/`post_media` INSERT.
     - **결정**: 도시는 구조적 `cities` 엔티티로 만들지 않는다. 위치는 핀(`location`)+나라(`country_code`) 필수 + 자유 지역명(`place_label`) 옵셔널. 필요 시 나중에 지오코딩으로 정규화 업그레이드(cities 자체 구축은 안 함).
-- **다음: C-2-3b — 정식 작성 폼 UI (아직 시작 안 함)**
-  - 목표: compose 테스트 화면의 임시 입력(캡션/공개범위/지역명 TextInput)을 디자인 확정된 정식 폼으로 교체, 나라상세 화면의 "기록 추가" 진입점과 연결
-  - `savePost()`(`lib/posts.ts`) 저장 로직 자체는 C-2-3a에서 완료 — 재사용
-  - 시안: `design/write.png` (작성 화면 디자인, 아직 미커밋 — C-2-3b 작업 시 코드와 함께 커밋 예정)
+  - C-2-3b: compose 정식 작성 폼(design/write.png 시안 반영) + 나라상세 "기록 추가" FAB 진입점. Camera `initialViewState`는 `centerCoordinate`/`zoomLevel`이 아니라 `center`/`zoom`(실기기 버그로 발견, v11 API 주의 항목 정정).
+  - Phase E: `app/post/[id].tsx` 게시물 상세 화면(사진 캐러셀, 위치 미니맵, 글, 공개범위·작성일). 나라상세 그리드 셀 탭으로 진입. `posts_with_coords` 뷰(`security_invoker=true`, `ST_X`/`ST_Y`로 lng/lat 미리 계산) 추가 — `posts.location`이 PostgREST로 WKB 16진수로 내려와 프론트에서 파싱 불가능한 문제 해결, 나라상세 핀·프로필 등에서도 재사용 가능.
+- **다음: Phase D — 프로필 실데이터화 + 나라/날짜 필터 (아직 시작 안 함)**
+  - 목표: 지금 더미(가짜 통계·가짜 사진)인 프로필 탭을 실제 `posts` 데이터로 연결. 나라(`country_code`)·날짜(`created_at`) 기준 필터 UI 추가.
+  - 데이터는 이미 준비돼 있음(C-2-3a 결정 로그, `country_code`/`created_at` 컬럼 존재) — 이번엔 UI/쿼리만 붙이면 됨.
+  - 사진 표시는 `lib/media.ts`의 `resolveMediaUrls` 재사용. 좌표가 필요해지면 `posts_with_coords` 뷰(Phase E) 재사용.
 
 ## 기능 범위 (단계별 — 범위 밖은 건드리지 말 것)
 
