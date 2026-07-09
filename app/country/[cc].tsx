@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { theme } from '@/constants/theme';
 import { COLOR_PALETTE } from '@/constants/palette';
@@ -42,77 +43,91 @@ export default function CountryDetailScreen() {
   const [lockHintVisible, setLockHintVisible] = useState(false);
   const lockHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const canColor = !loadingPosts && posts.length > 0;
+  // 최초 1회만 로딩 스피너를 보여주고, 이후 포커스 재조회는 기존 그리드를 유지한
+  // 채 백그라운드로 갱신한다(깜빡임 방지).
+  const loadedPostsOnceRef = useRef(false);
   // 그리드 컨테이너의 실제 렌더 폭 — Dimensions.get('window')는 엣지투엣지/시스템바
   // 처리 방식에 따라 실제 렌더 폭과 어긋날 수 있어 onLayout으로 직접 측정한다.
   const [gridWidth, setGridWidth] = useState(SCREEN_WIDTH);
   const cellSize = (gridWidth - GRID_GAP * (NUM_COLS - 1)) / NUM_COLS;
 
-  useEffect(() => {
-    const userId = session?.user.id;
-    if (!userId || !cc) return;
+  // 나라상세가 포커스될 때마다 재조회 — 게시물 상세에서 삭제하고 돌아오면(E-2)
+  // 즉시 반영된다. color는 G-1 트리거가 만들거나 지우므로 색 동그라미 상태도
+  // 같이 갱신해야 한다.
+  useFocusEffect(
+    useCallback(() => {
+      const userId = session?.user.id;
+      if (!userId || !cc) return;
 
-    supabase
-      .from('country_visits')
-      .select('color')
-      .eq('user_id', userId)
-      .eq('country_code', cc)
-      .maybeSingle()
-      .then(({ data, error }) => {
-        if (error) {
-          console.error('country_visits 조회 실패:', error);
-          return;
-        }
-        setColor(data?.color ?? null);
-      });
-  }, [session?.user.id, cc]);
+      supabase
+        .from('country_visits')
+        .select('color')
+        .eq('user_id', userId)
+        .eq('country_code', cc)
+        .maybeSingle()
+        .then(({ data, error }) => {
+          if (error) {
+            console.error('country_visits 조회 실패:', error);
+            return;
+          }
+          setColor(data?.color ?? null);
+        });
+    }, [session?.user.id, cc]),
+  );
 
   // 이 나라(cc)의 게시물 그리드 — visibility 판정은 RLS(posts_select_visible)에 맡기고
   // 여기선 country_code만 필터. post_media를 전부 가져와 order_index 오름차순 정렬 후
   // 맨 앞을 대표사진으로 쓰고, 개수로 '여러장' 배지 여부를 판단한다.
   // 대표사진 url은 시드의 외부 URL이거나 private 버킷 저장 경로일 수 있어, 후처리로
   // resolveMediaUrls(signed URL 배치 발급, 1시간 만료)를 거친 뒤 화면에 반영한다.
-  useEffect(() => {
-    if (!cc) return;
-    setLoadingPosts(true);
-    let cancelled = false;
+  //
+  // 포커스될 때마다 재조회(게시물 상세에서 삭제 후 돌아오면 그리드가 바로 갱신되게).
+  // 최초 로드만 스피너를 보여주고, 재조회는 기존 그리드를 유지한 채 교체한다.
+  useFocusEffect(
+    useCallback(() => {
+      if (!cc) return;
+      if (!loadedPostsOnceRef.current) setLoadingPosts(true);
+      let cancelled = false;
 
-    (async () => {
-      const { data, error } = await supabase
-        .from('posts')
-        .select('id, post_media(url, order_index)')
-        .eq('country_code', cc)
-        .order('created_at', { ascending: false });
+      (async () => {
+        const { data, error } = await supabase
+          .from('posts')
+          .select('id, post_media(url, order_index)')
+          .eq('country_code', cc)
+          .order('created_at', { ascending: false });
 
-      if (error) {
-        console.error('posts 조회 실패:', error);
-        if (!cancelled) setLoadingPosts(false);
-        return;
-      }
+        if (error) {
+          console.error('posts 조회 실패:', error);
+          if (!cancelled) setLoadingPosts(false);
+          return;
+        }
 
-      const rows = (data ?? []).map((post) => {
-        const media = [...(post.post_media ?? [])].sort((a, b) => a.order_index - b.order_index);
-        return { id: post.id, coverUrl: media[0]?.url ?? null, mediaCount: media.length };
-      });
+        const rows = (data ?? []).map((post) => {
+          const media = [...(post.post_media ?? [])].sort((a, b) => a.order_index - b.order_index);
+          return { id: post.id, coverUrl: media[0]?.url ?? null, mediaCount: media.length };
+        });
 
-      const rawUrls = rows
-        .map((row) => row.coverUrl)
-        .filter((url): url is string => url !== null);
-      const resolved = await resolveMediaUrls(rawUrls);
+        const rawUrls = rows
+          .map((row) => row.coverUrl)
+          .filter((url): url is string => url !== null);
+        const resolved = await resolveMediaUrls(rawUrls);
 
-      if (cancelled) return;
-      setPosts(
-        rows.map((row) => ({
-          ...row,
-          coverUrl: row.coverUrl ? resolved[row.coverUrl] ?? null : null,
-        })),
-      );
-      setLoadingPosts(false);
-    })();
+        if (cancelled) return;
+        setPosts(
+          rows.map((row) => ({
+            ...row,
+            coverUrl: row.coverUrl ? resolved[row.coverUrl] ?? null : null,
+          })),
+        );
+        setLoadingPosts(false);
+        loadedPostsOnceRef.current = true;
+      })();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [cc]);
+      return () => {
+        cancelled = true;
+      };
+    }, [cc]),
+  );
 
   useEffect(() => {
     return () => {

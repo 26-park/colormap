@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Dimensions,
   Image,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -17,8 +19,9 @@ import { Map, Camera, Marker, GeoJSONSource, Layer } from '@maplibre/maplibre-re
 import { theme } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import { resolveMediaUrls } from '@/lib/media';
-import { type PostVisibility } from '@/lib/posts';
+import { deletePost, type PostVisibility } from '@/lib/posts';
 import { getCountryName } from '@/lib/countryFromCoord';
+import { useAuth } from '@/context/auth';
 import countriesGeoJSON from '@/assets/geo/countries.json';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -39,6 +42,7 @@ const VISIBILITY_LABELS: Record<PostVisibility, string> = {
 };
 
 type PostDetail = {
+  userId: string;
   caption: string | null;
   placeLabel: string | null;
   visibility: PostVisibility;
@@ -59,6 +63,7 @@ function formatDate(iso: string) {
 export default function PostDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const { session } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -66,6 +71,8 @@ export default function PostDetailScreen() {
   const [photoUrls, setPhotoUrls] = useState<string[]>([]);
   const [carouselWidth, setCarouselWidth] = useState(SCREEN_WIDTH);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -80,7 +87,7 @@ export default function PostDetailScreen() {
       // posts_with_coords 뷰(ST_X/ST_Y로 lng/lat 미리 계산, Phase E)를 대신 조회한다.
       const { data, error } = await supabase
         .from('posts_with_coords')
-        .select('caption, place_label, visibility, created_at, taken_at, country_code, lng, lat')
+        .select('user_id, caption, place_label, visibility, created_at, taken_at, country_code, lng, lat')
         .eq('id', id)
         .maybeSingle();
 
@@ -96,6 +103,7 @@ export default function PostDetailScreen() {
       }
 
       setPost({
+        userId: data.user_id,
         caption: data.caption,
         placeLabel: data.place_label,
         visibility: data.visibility,
@@ -139,6 +147,53 @@ export default function PostDetailScreen() {
   }
 
   const countryName = post ? getCountryName(post.countryCode) : null;
+  const isOwner = !!post && !!session?.user.id && post.userId === session.user.id;
+
+  // 삭제 확인 다이얼로그 문구용 — 이 나라의 내 게시물이 지금 게시물 1개뿐이면
+  // 삭제 시 country_visits 색칠도 함께 사라진다(G-1 트리거)는 안내를 추가한다.
+  async function handleDeletePress() {
+    if (!post) return;
+    setMenuOpen(false);
+
+    const { count, error } = await supabase
+      .from('posts')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', post.userId)
+      .eq('country_code', post.countryCode);
+
+    if (error) {
+      console.error('[E-2] 게시물 수 조회 실패:', error);
+    }
+    const isLastPost = (count ?? 0) === 1;
+
+    Alert.alert(
+      '기록을 삭제할까요?',
+      isLastPost
+        ? '사진도 함께 삭제됩니다. 되돌릴 수 없어요.\n이 나라의 마지막 기록이에요. 삭제하면 지도의 색칠도 사라집니다.'
+        : '사진도 함께 삭제됩니다. 되돌릴 수 없어요.',
+      [
+        { text: '취소', style: 'cancel' },
+        { text: '삭제', style: 'destructive', onPress: () => runDelete() },
+      ],
+    );
+  }
+
+  async function runDelete() {
+    if (!id || !post) return;
+    setDeleting(true);
+    try {
+      await deletePost(id);
+      // 나라상세에서 들어온 경우 스택에 이미 그 화면이 있다 — replace로 새 인스턴스를
+      // 또 쌓으면(스택에 나라상세가 중복돼) 뒤로가기 시 삭제 전 화면이 다시 보인다.
+      // dismissTo는 스택에서 기존 나라상세를 찾아 그 화면까지 되돌아가고(포커스 시
+      // useFocusEffect가 재조회), 못 찾으면 대신 replace한다 — 어느 진입 경로든 안전.
+      router.dismissTo({ pathname: '/country/[cc]', params: { cc: post.countryCode, nm: countryName ?? '' } } as any);
+    } catch (err) {
+      console.error('[E-2] 게시물 삭제 실패:', err);
+      setDeleting(false);
+      Alert.alert('삭제하지 못했어요', '다시 시도해주세요.');
+    }
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -148,9 +203,13 @@ export default function PostDetailScreen() {
           <Text style={styles.backIcon}>‹</Text>
         </Pressable>
         <Text style={styles.headerTitle} numberOfLines={1}>{countryName ?? '기록'}</Text>
-        <Pressable style={styles.iconBtn}>
-          <Text style={styles.moreIcon}>···</Text>
-        </Pressable>
+        {isOwner ? (
+          <Pressable style={styles.iconBtn} onPress={() => setMenuOpen(true)}>
+            <Text style={styles.moreIcon}>···</Text>
+          </Pressable>
+        ) : (
+          <View style={styles.iconBtn} />
+        )}
       </View>
 
       {loading ? (
@@ -242,6 +301,29 @@ export default function PostDetailScreen() {
             </View>
           </View>
         </ScrollView>
+      )}
+
+      {/* ··· 메뉴 바텀시트 — 본인 게시물에서만 (지금은 삭제 하나뿐) */}
+      <Modal
+        visible={menuOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setMenuOpen(false)}
+      >
+        <View style={styles.modalRoot}>
+          <Pressable style={styles.backdrop} onPress={() => setMenuOpen(false)} />
+          <View style={styles.sheet}>
+            <Pressable style={styles.menuItem} onPress={handleDeletePress}>
+              <Text style={styles.menuItemTextDanger}>삭제</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {deleting && (
+        <View style={styles.deletingOverlay}>
+          <ActivityIndicator color="#fff" />
+        </View>
       )}
     </SafeAreaView>
   );
@@ -393,5 +475,40 @@ const styles = StyleSheet.create({
   dateText: {
     fontSize: 12,
     color: theme.colors.textSecondary,
+  },
+
+  // ··· 메뉴 바텀시트
+  modalRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  sheet: {
+    backgroundColor: theme.colors.background,
+    borderTopLeftRadius: theme.radius.card,
+    borderTopRightRadius: theme.radius.card,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 36,
+  },
+  menuItem: {
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  menuItemTextDanger: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#ef4444',
+  },
+
+  // 삭제 진행 중 오버레이
+  deletingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

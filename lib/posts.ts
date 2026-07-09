@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { isExternalUrl } from '@/lib/media';
 
 export type PostVisibility = 'public' | 'friends' | 'private';
 
@@ -54,6 +55,47 @@ export async function savePost(params: SavePostParams): Promise<void> {
     }
     await removeMediaBestEffort(mediaPaths);
     throw mediaError;
+  }
+}
+
+// 게시물 삭제 (Phase E-2). post_media는 posts에 on delete cascade, country_visits는
+// G-1 트리거가 자동 정리 — 앱이 직접 할 일은 Storage 파일 경로 확보 + posts 삭제 +
+// Storage 파일 삭제 셋뿐이다.
+//
+// ⚠️ 순서 엄수: post_media를 먼저 조회해 경로를 확보한 뒤 posts를 지운다 —
+// 반대로 하면 cascade로 post_media가 먼저 사라져 경로를 잃는다.
+export async function deletePost(postId: string): Promise<void> {
+  const { data: mediaRows, error: mediaError } = await supabase
+    .from('post_media')
+    .select('url')
+    .eq('post_id', postId);
+
+  if (mediaError) {
+    console.error('[E-2] post_media 조회 실패:', mediaError);
+    throw mediaError;
+  }
+
+  // 시드 데이터의 외부 URL(picsum 등)은 Storage 파일이 아니므로 제외.
+  const storagePaths = (mediaRows ?? [])
+    .map((row) => row.url)
+    .filter((url) => !isExternalUrl(url));
+
+  // posts 삭제 — RLS(posts_owner_all)가 본인 것만 허용. 여기서 cascade(post_media)와
+  // 트리거(country_visits, G-1)가 함께 처리된다. 실패하면 파일은 건드리지 않는다.
+  const { error: postError } = await supabase.from('posts').delete().eq('id', postId);
+
+  if (postError) {
+    console.error('[E-2] posts 삭제 실패:', postError);
+    throw postError;
+  }
+
+  // Storage 파일 삭제는 best-effort — 게시물은 이미 지워졌으므로 실패해도 사용자
+  // 입장에선 삭제 성공. 고아 파일은 // TODO: 주기적 정리 배치(나중).
+  if (storagePaths.length > 0) {
+    const { error: storageError } = await supabase.storage.from('post-media').remove(storagePaths);
+    if (storageError) {
+      console.error('[E-2] Storage 파일 삭제 실패(고아 파일 남음):', storageError);
+    }
   }
 }
 

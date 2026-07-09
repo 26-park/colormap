@@ -2,7 +2,7 @@ import { supabase } from '@/lib/supabase';
 
 const SIGNED_URL_TTL_SECONDS = 60 * 60; // PRD 9.5: 1시간
 
-function isExternalUrl(value: string) {
+export function isExternalUrl(value: string) {
   return value.startsWith('http://') || value.startsWith('https://');
 }
 

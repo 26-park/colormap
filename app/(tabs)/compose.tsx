@@ -202,7 +202,16 @@ export default function ComposeScreen() {
         placeLabel: placeLabel.trim() || null,
         mediaPaths,
       });
-      router.replace({ pathname: '/country/[cc]', params: { cc: countryMatch.cc, nm: countryMatch.nm } } as any);
+      // E-2와 동일한 스택 문제: compose는 나라상세에서만 진입하므로(C-2-3b) 스택에
+      // country/[cc]가 이미 있다. replace로 새 인스턴스를 또 쌓으면 스택에 country가
+      // 중복되어 뒤로가기 시 삭제/저장 전 화면이 다시 보인다.
+      // dismissTo(POP_TO)는 dynamic 세그먼트별 getId를 등록하지 않은 이상 스택에서
+      // route 이름만으로 일치하는 화면을 찾는다 — country/[cc]는 compose 진입 경로상
+      // 항상 유일하므로, 핀을 다른 나라에 찍어 진입 나라와 저장 나라(countryMatch.cc)가
+      // 달라도 그 하나뿐인 country 화면을 찾아 그대로 재사용하고 params만 새 나라로
+      // 덮어쓴다(별도 나라 분기 불필요). 포커스 전환이 일어나므로 나라상세의
+      // useFocusEffect가 새 cc로 다시 조회해 방금 올린 게시물이 그리드에 뜬다.
+      router.dismissTo({ pathname: '/country/[cc]', params: { cc: countryMatch.cc, nm: countryMatch.nm } } as any);
     } catch (err) {
       console.error('[C-2-3a] 저장 실패:', err);
       Alert.alert('저장 실패', '잠시 후 다시 시도해주세요.');
