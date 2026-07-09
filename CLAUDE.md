@@ -57,12 +57,9 @@
   - Phase E: `app/post/[id].tsx` 게시물 상세 화면(사진 캐러셀, 위치 미니맵, 글, 공개범위·작성일). 나라상세 그리드 셀 탭으로 진입. `posts_with_coords` 뷰(`security_invoker=true`, `ST_X`/`ST_Y`로 lng/lat 미리 계산) 추가 — `posts.location`이 PostgREST로 WKB 16진수로 내려와 프론트에서 파싱 불가능한 문제 해결, 나라상세 핀·프로필 등에서도 재사용 가능.
   - Phase D-1: 프로필 탭 더미 제거, 실데이터 연결 — 통계 3개(나라/기록/친구, 전부 count-only 쿼리), 내 게시물 전체 그리드(C-1과 동일 패턴: 대표사진 order_index 최소, 여러장 배지, `resolveMediaUrls`), 셀 탭 → 게시물 상세. avatar_url/bio 있으면 표시.
   - Phase D-2: 프로필 그리드에 나라 필터 칩 + 정렬(최신/오래된순) + 서버 사이드 페이지네이션(`.range()`, `PAGE_SIZE=30`). `my_post_countries()` RPC(`security invoker`, db push 완료) 추가 — 내가 기록을 올린 나라만 칩으로 노출. 필터/정렬 변경 시 `requestId` 토큰으로 지연 응답 무시하며 처음부터 재로드, `onEndReached`는 `loadingRef`로 중복 가드. signed URL은 페이지 단위로만 발급(전체 일괄발급 금지 — 운영에서 중요). 통계 카드는 필터 무관 전체 기준 유지, 그리드 헤더 "내 기록 N"만 필터 적용된 별도 count.
-- **다음: "색칠은 게시물 있는 나라만" 규칙 — 아직 설계 단계, 코드 작성 전**
-  - 배경: 현재 `country_visits`와 `posts`가 서로 무관해서, 게시물이 없는 나라도 색칠이 가능한 상태(실제로 CN이 게시물 없이 칠해져 있음).
-  - 정할 것: ① 색칠 생성 시점 — 게시물을 올리면 자동으로 칠해지게 할지, 아니면 색칠 UI 자체를 게시물 있는 나라로 잠글지. ② 그 나라의 마지막 게시물을 삭제하면 색칠은 어떻게 되는지(자동 해제 vs 유지). ③ 기존에 게시물 없이 칠해진 CN 같은 데이터를 어떻게 정리할지.
-  - `my_post_countries()` RPC(Phase D-2에서 추가)를 이 규칙 구현에 재사용 가능.
-  - 게시물 삭제(다음 후보 E-2)와 맞물리는 결정이라 같이 설계 검토할 것.
-- **그 뒤 후보**: E-2(게시물 삭제) → F(나라 이름 한글화 등 다듬기) → G(v1 출시 점검)
+  - Phase G-1: "색칠은 게시물 있는 나라만" 규칙을 DB 트리거로 강제. `posts` AFTER INSERT/UPDATE/DELETE 트리거(`sync_country_visit_on_post_change()`, SECURITY INVOKER)가 `country_visits`를 자동 동기화 — 게시물 저장 시 없으면 기본색(`#ff6a2b`, 브랜드 주황)으로 생성, 이미 있으면 유지(사용자가 고른 색 보존), 그 나라 게시물이 0개가 되면 삭제. `country_code`가 바뀌는 UPDATE(현재 앱엔 없음)까지 대비. SECURITY INVOKER 선택 근거: `posts_owner_all` RLS가 이미 `user_id = auth.uid()`를 강제하므로 트리거도 본인 행만 건드리게 됨(DEFINER로 권한을 올릴 필요 없음) — `search_path`는 고정. 기존에 게시물 없이 칠해져 있던 CN 데이터 1행 정리 완료.
+  - Phase G-2: 나라상세(`app/country/[cc].tsx`) 색칠 UI를 G-1 규칙에 맞춤 — **앱은 색칠을 생성하지 않는다(트리거가 함). 앱은 이미 있는 색칠의 색만 바꾼다.** 게시물 0개면 색 동그라미 비활성(회색 링, opacity 0.5) + 탭 시 "이 나라에 기록을 추가하면 색칠돼요" 인라인 안내(2초 후 자동 소멸), 팔레트 안 열림. 게시물 1개 이상이면 기존대로 팔레트 오픈. 저장 로직은 `upsert` → `update`(+`.select()`로 영향 행 수 확인)로 변경, INSERT 경로 완전 제거. 이미 로드 중인 나라상세 게시물 개수(`posts.length`)로 판단 — 추가 쿼리 없음.
+- **다음 후보**: E-2(게시물 삭제) → F(나라 이름 한글화 등 다듬기) → G-3(v1 출시 점검)
 
 ## 기능 범위 (단계별 — 범위 밖은 건드리지 말 것)
 
@@ -129,6 +126,7 @@
 - **색칠 정책**: 나라 단위 색칠, 색은 `country_visits.color`로 사용자가 나라마다 지정.
   나라 색 선택 UI는 나라상세 화면(v1 범위). 이 파일의 내용·스키마 변경 금지.
   - **v1 = 고정 팔레트 8색만, 무료.** 컬러휠·그라데이션·hex 직접입력은 v1.2 유료 잠금해제(소액 결제) — v1에서 만들지 말 것.
+  - **색칠 생성/삭제는 DB 트리거 전담, 앱은 색 변경만** (Phase G-1/G-2 확정). `posts` INSERT/DELETE 시 `country_visits` 행이 자동 생성·삭제된다 — 앱 코드는 절대 `country_visits`에 INSERT/upsert하지 않고 기존 행의 `color`만 UPDATE한다. 게시물 없는 나라는 색칠 UI 자체가 잠긴다.
 
 ## 데이터 모델 (요약 — 상세 SQL은 docs/PRD.md 참고)
 

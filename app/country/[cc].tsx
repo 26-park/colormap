@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -37,6 +37,11 @@ export default function CountryDetailScreen() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [posts, setPosts] = useState<GridPost[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(true);
+  // G-2: 색칠 생성은 posts INSERT 트리거(G-1)만 한다 — 앱은 이미 있는 색칠의
+  // 색만 바꾼다. 게시물이 있을 때만(=country_visits 행이 보장될 때만) 팔레트를 연다.
+  const [lockHintVisible, setLockHintVisible] = useState(false);
+  const lockHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const canColor = !loadingPosts && posts.length > 0;
   // 그리드 컨테이너의 실제 렌더 폭 — Dimensions.get('window')는 엣지투엣지/시스템바
   // 처리 방식에 따라 실제 렌더 폭과 어긋날 수 있어 onLayout으로 직접 측정한다.
   const [gridWidth, setGridWidth] = useState(SCREEN_WIDTH);
@@ -109,19 +114,42 @@ export default function CountryDetailScreen() {
     };
   }, [cc]);
 
+  useEffect(() => {
+    return () => {
+      if (lockHintTimerRef.current) clearTimeout(lockHintTimerRef.current);
+    };
+  }, []);
+
+  function handleColorDotPress() {
+    if (!canColor) {
+      setLockHintVisible(true);
+      if (lockHintTimerRef.current) clearTimeout(lockHintTimerRef.current);
+      lockHintTimerRef.current = setTimeout(() => setLockHintVisible(false), 2000);
+      return;
+    }
+    setPaletteOpen(true);
+  }
+
+  // G-1 트리거가 색칠 생성/삭제를 전담 — 앱은 이미 존재하는 country_visits 행의
+  // color만 UPDATE한다(INSERT/upsert 경로 없음). canColor가 true인 이상 트리거가
+  // 행을 보장하지만, update된 행이 0개면(이론상 불일치 상황) 조용히 경고만 남긴다.
   async function handleSelectColor(picked: string) {
     const userId = session?.user.id;
     if (!userId || !cc) return;
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('country_visits')
-      .upsert(
-        { user_id: userId, country_code: cc, color: picked },
-        { onConflict: 'user_id,country_code' },
-      );
+      .update({ color: picked })
+      .eq('user_id', userId)
+      .eq('country_code', cc)
+      .select('color');
 
     if (error) {
       console.error('country_visits 저장 실패:', error);
+      return;
+    }
+    if (!data || data.length === 0) {
+      console.warn('country_visits 행이 없어 색을 변경하지 못했습니다:', cc);
       return;
     }
     setColor(picked);
@@ -139,14 +167,25 @@ export default function CountryDetailScreen() {
         <View style={styles.titleRow}>
           <Text style={styles.title} numberOfLines={1}>{nm}</Text>
           <Pressable
-            style={[styles.colorDot, color ? { backgroundColor: color } : styles.colorDotEmpty]}
-            onPress={() => setPaletteOpen(true)}
+            style={[
+              styles.colorDot,
+              canColor
+                ? (color ? { backgroundColor: color } : styles.colorDotEmpty)
+                : styles.colorDotLocked,
+            ]}
+            onPress={handleColorDotPress}
           />
         </View>
 
         <Pressable style={styles.iconBtn}>
           <Text style={styles.moreIcon}>···</Text>
         </Pressable>
+
+        {lockHintVisible && (
+          <View style={styles.lockHintWrap} pointerEvents="none">
+            <Text style={styles.lockHintText}>이 나라에 기록을 추가하면 색칠돼요</Text>
+          </View>
+        )}
       </View>
 
       {/* 본문 — 게시물 사진 그리드 */}
@@ -240,6 +279,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 8,
+    position: 'relative',
   },
   iconBtn: {
     width: 36,
@@ -283,6 +323,30 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.background,
     borderWidth: 1.5,
     borderColor: theme.colors.border,
+  },
+  colorDotLocked: {
+    backgroundColor: theme.colors.background,
+    borderWidth: 1.5,
+    borderColor: theme.colors.border,
+    opacity: 0.5,
+  },
+  lockHintWrap: {
+    position: 'absolute',
+    top: '100%',
+    left: 16,
+    right: 16,
+    marginTop: 4,
+    alignItems: 'center',
+  },
+  lockHintText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#fff',
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    overflow: 'hidden',
   },
 
   body: {
