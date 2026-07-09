@@ -44,7 +44,7 @@
 - v1 범위 안에서만 구현할 것. v1.1, v1.2 기능은 아직 만들지 말 것.
 - 환경 셋업 완료: Expo 프로젝트 생성됨, GitHub 연결됨. dev build(`npx expo run:android`) 필요 — Expo Go로는 지도/카메라/위치 등 네이티브 모듈이 안 뜸.
 - **디자인 단계 완료**: 디자인 토큰·네비게이션·화면별 사양 확정 → docs/PRD.md 6~8장에 반영.
-- **완료 (C-1 ~ Phase E)**:
+- **완료 (C-1 ~ Phase D)**:
   - C-1: 나라상세 게시물 사진 그리드(3열, 대표사진, 여러장 배지)
   - C-2-1a: `post-media` private Storage 버킷 + RLS 정책 (설계: docs/PRD.md 9.5)
   - C-2-1b: 사진 선택(expo-image-picker) → 리사이즈(expo-image-manipulator, 긴 변 1600px/JPEG 0.8) → post-media 업로드
@@ -55,10 +55,14 @@
     - **결정**: 도시는 구조적 `cities` 엔티티로 만들지 않는다. 위치는 핀(`location`)+나라(`country_code`) 필수 + 자유 지역명(`place_label`) 옵셔널. 필요 시 나중에 지오코딩으로 정규화 업그레이드(cities 자체 구축은 안 함).
   - C-2-3b: compose 정식 작성 폼(design/write.png 시안 반영) + 나라상세 "기록 추가" FAB 진입점. Camera `initialViewState`는 `centerCoordinate`/`zoomLevel`이 아니라 `center`/`zoom`(실기기 버그로 발견, v11 API 주의 항목 정정).
   - Phase E: `app/post/[id].tsx` 게시물 상세 화면(사진 캐러셀, 위치 미니맵, 글, 공개범위·작성일). 나라상세 그리드 셀 탭으로 진입. `posts_with_coords` 뷰(`security_invoker=true`, `ST_X`/`ST_Y`로 lng/lat 미리 계산) 추가 — `posts.location`이 PostgREST로 WKB 16진수로 내려와 프론트에서 파싱 불가능한 문제 해결, 나라상세 핀·프로필 등에서도 재사용 가능.
-- **다음: Phase D — 프로필 실데이터화 + 나라/날짜 필터 (아직 시작 안 함)**
-  - 목표: 지금 더미(가짜 통계·가짜 사진)인 프로필 탭을 실제 `posts` 데이터로 연결. 나라(`country_code`)·날짜(`created_at`) 기준 필터 UI 추가.
-  - 데이터는 이미 준비돼 있음(C-2-3a 결정 로그, `country_code`/`created_at` 컬럼 존재) — 이번엔 UI/쿼리만 붙이면 됨.
-  - 사진 표시는 `lib/media.ts`의 `resolveMediaUrls` 재사용. 좌표가 필요해지면 `posts_with_coords` 뷰(Phase E) 재사용.
+  - Phase D-1: 프로필 탭 더미 제거, 실데이터 연결 — 통계 3개(나라/기록/친구, 전부 count-only 쿼리), 내 게시물 전체 그리드(C-1과 동일 패턴: 대표사진 order_index 최소, 여러장 배지, `resolveMediaUrls`), 셀 탭 → 게시물 상세. avatar_url/bio 있으면 표시.
+  - Phase D-2: 프로필 그리드에 나라 필터 칩 + 정렬(최신/오래된순) + 서버 사이드 페이지네이션(`.range()`, `PAGE_SIZE=30`). `my_post_countries()` RPC(`security invoker`, db push 완료) 추가 — 내가 기록을 올린 나라만 칩으로 노출. 필터/정렬 변경 시 `requestId` 토큰으로 지연 응답 무시하며 처음부터 재로드, `onEndReached`는 `loadingRef`로 중복 가드. signed URL은 페이지 단위로만 발급(전체 일괄발급 금지 — 운영에서 중요). 통계 카드는 필터 무관 전체 기준 유지, 그리드 헤더 "내 기록 N"만 필터 적용된 별도 count.
+- **다음: "색칠은 게시물 있는 나라만" 규칙 — 아직 설계 단계, 코드 작성 전**
+  - 배경: 현재 `country_visits`와 `posts`가 서로 무관해서, 게시물이 없는 나라도 색칠이 가능한 상태(실제로 CN이 게시물 없이 칠해져 있음).
+  - 정할 것: ① 색칠 생성 시점 — 게시물을 올리면 자동으로 칠해지게 할지, 아니면 색칠 UI 자체를 게시물 있는 나라로 잠글지. ② 그 나라의 마지막 게시물을 삭제하면 색칠은 어떻게 되는지(자동 해제 vs 유지). ③ 기존에 게시물 없이 칠해진 CN 같은 데이터를 어떻게 정리할지.
+  - `my_post_countries()` RPC(Phase D-2에서 추가)를 이 규칙 구현에 재사용 가능.
+  - 게시물 삭제(다음 후보 E-2)와 맞물리는 결정이라 같이 설계 검토할 것.
+- **그 뒤 후보**: E-2(게시물 삭제) → F(나라 이름 한글화 등 다듬기) → G(v1 출시 점검)
 
 ## 기능 범위 (단계별 — 범위 밖은 건드리지 말 것)
 
