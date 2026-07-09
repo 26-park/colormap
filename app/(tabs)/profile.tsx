@@ -1,7 +1,6 @@
 import {
   ActivityIndicator,
   Dimensions,
-  FlatList,
   Image,
   Pressable,
   ScrollView,
@@ -11,52 +10,138 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/auth';
 import { supabase } from '@/lib/supabase';
+import { resolveMediaUrls } from '@/lib/media';
 import { theme } from '@/constants/theme';
 
-const GRID_GAP = 2;
+const GRID_GAP = 1;
 const NUM_COLS = 3;
 const SCREEN_WIDTH = Dimensions.get('window').width;
-const CELL_SIZE = (SCREEN_WIDTH - GRID_GAP * (NUM_COLS - 1)) / NUM_COLS;
 
-// 더미 사진 데이터 (실제 게시물 구현 전까지)
-const DUMMY_PHOTOS = [
-  { id: '1', uri: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400' },
-  { id: '2', uri: 'https://images.unsplash.com/photo-1469474968028-56623f02e42e?w=400' },
-  { id: '3', uri: 'https://images.unsplash.com/photo-1501854140801-50d01698950b?w=400' },
-  { id: '4', uri: 'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=400' },
-  { id: '5', uri: 'https://images.unsplash.com/photo-1518173946687-a4c8892bbd9f?w=400' },
-  { id: '6', uri: 'https://images.unsplash.com/photo-1475924156734-496f6cac6ec1?w=400' },
-  { id: '7', uri: 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=400' },
-  { id: '8', uri: 'https://images.unsplash.com/photo-1519681393784-d120267933ba?w=400' },
-  { id: '9', uri: 'https://images.unsplash.com/photo-1506197603052-3cc9c3a201bd?w=400' },
-];
+type GridPost = {
+  id: string;
+  coverUrl: string | null;
+  mediaCount: number;
+};
 
-// 더미 통계
-const DUMMY_STATS = {
-  countries: 14,
-  posts: 214,
+type Stats = {
+  countries: number;
+  posts: number;
+  friends: number;
 };
 
 export default function ProfileScreen() {
   const { session, signOut } = useAuth();
+  const router = useRouter();
+
   const [username, setUsername] = useState<string | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [bio, setBio] = useState<string | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [signingOut, setSigningOut] = useState(false);
 
+  const [stats, setStats] = useState<Stats>({ countries: 0, posts: 0, friends: 0 });
+
+  const [posts, setPosts] = useState<GridPost[]>([]);
+  const [loadingPosts, setLoadingPosts] = useState(true);
+  // 나라상세(app/country/[cc].tsx)와 동일한 이유로 Dimensions.get 대신 onLayout 실측 폭 사용.
+  const [gridWidth, setGridWidth] = useState(SCREEN_WIDTH);
+  const cellSize = (gridWidth - GRID_GAP * (NUM_COLS - 1)) / NUM_COLS;
+
+  // 프로필 (username, avatar_url, bio)
   useEffect(() => {
     if (!session) return;
     supabase
       .from('profiles')
-      .select('username')
+      .select('username, avatar_url, bio')
       .eq('id', session.user.id)
       .single()
       .then(({ data }) => {
         setUsername(data?.username ?? null);
+        setAvatarUrl(data?.avatar_url ?? null);
+        setBio(data?.bio ?? null);
         setLoadingProfile(false);
       });
   }, [session]);
+
+  // 통계 3개 — count만 가볍게 조회(head: true). friends는 지금 항상 0
+  // (v1.1 친구 기능 붙으면 자동으로 채워짐).
+  useEffect(() => {
+    const userId = session?.user.id;
+    if (!userId) return;
+
+    (async () => {
+      const [countriesRes, postsRes, friendsRes] = await Promise.all([
+        supabase
+          .from('country_visits')
+          .select('id', { count: 'exact', head: true })
+          .eq('user_id', userId),
+        supabase
+          .from('posts')
+          .select('id', { count: 'exact', head: true })
+          .eq('user_id', userId),
+        supabase
+          .from('friendships')
+          .select('user_low', { count: 'exact', head: true })
+          .eq('status', 'accepted')
+          .or(`user_low.eq.${userId},user_high.eq.${userId}`),
+      ]);
+
+      setStats({
+        countries: countriesRes.count ?? 0,
+        posts: postsRes.count ?? 0,
+        friends: friendsRes.count ?? 0,
+      });
+    })();
+  }, [session?.user.id]);
+
+  // 내 게시물 전체 그리드 — app/country/[cc].tsx와 동일 패턴(대표사진 order_index 최소,
+  // 여러장 배지, resolveMediaUrls 배치 signed URL), country_code 대신 user_id로 필터.
+  useEffect(() => {
+    const userId = session?.user.id;
+    if (!userId) return;
+    setLoadingPosts(true);
+    let cancelled = false;
+
+    (async () => {
+      const { data, error } = await supabase
+        .from('posts')
+        .select('id, post_media(url, order_index)')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('posts 조회 실패:', error);
+        if (!cancelled) setLoadingPosts(false);
+        return;
+      }
+
+      const rows = (data ?? []).map((post) => {
+        const media = [...(post.post_media ?? [])].sort((a, b) => a.order_index - b.order_index);
+        return { id: post.id, coverUrl: media[0]?.url ?? null, mediaCount: media.length };
+      });
+
+      const rawUrls = rows
+        .map((row) => row.coverUrl)
+        .filter((url): url is string => url !== null);
+      const resolved = await resolveMediaUrls(rawUrls);
+
+      if (cancelled) return;
+      setPosts(
+        rows.map((row) => ({
+          ...row,
+          coverUrl: row.coverUrl ? resolved[row.coverUrl] ?? null : null,
+        })),
+      );
+      setLoadingPosts(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user.id]);
 
   const handleSignOut = async () => {
     setSigningOut(true);
@@ -83,9 +168,13 @@ export default function ProfileScreen() {
 
         {/* 프로필 영역 */}
         <View style={styles.profileSection}>
+          {/* TODO: 프로필 편집(아바타 업로드/소개 수정)은 별도 단계 */}
           <View style={styles.avatarWrapper}>
             <View style={styles.avatar}>
-              <Text style={styles.avatarEmoji}>🌍</Text>
+              {avatarUrl
+                ? <Image source={{ uri: avatarUrl }} style={styles.avatarImage} resizeMode="cover" />
+                : <Text style={styles.avatarEmoji}>🌍</Text>
+              }
             </View>
           </View>
 
@@ -97,42 +186,68 @@ export default function ProfileScreen() {
               </Text>
             )
           }
-          <Text style={styles.bio}>한 도시씩, 색으로 남기는 여행 기록</Text>
+          {bio ? <Text style={styles.bio}>{bio}</Text> : null}
         </View>
 
         {/* 통계 카드 */}
         <View style={styles.statsCard}>
           <View style={styles.statItem}>
-            <Text style={styles.statNumber}>{DUMMY_STATS.countries}</Text>
+            <Text style={styles.statNumber}>{stats.countries}</Text>
             <Text style={styles.statLabel}>나라</Text>
           </View>
           <View style={styles.statDivider} />
           <View style={styles.statItem}>
-            <Text style={styles.statNumber}>{DUMMY_STATS.posts}</Text>
-            <Text style={styles.statLabel}>게시물</Text>
+            <Text style={styles.statNumber}>{stats.posts}</Text>
+            <Text style={styles.statLabel}>기록</Text>
+          </View>
+          <View style={styles.statDivider} />
+          <View style={styles.statItem}>
+            <Text style={styles.statNumber}>{stats.friends}</Text>
+            <Text style={styles.statLabel}>친구</Text>
           </View>
         </View>
 
         {/* 내 기록 헤더 */}
         <View style={styles.gridHeader}>
           <Text style={styles.gridTitle}>
-            내 기록 <Text style={styles.gridCount}>{DUMMY_STATS.posts}</Text>
+            내 기록 <Text style={styles.gridCount}>{stats.posts}</Text>
           </Text>
           <Text style={styles.gridIcon}>⊞</Text>
         </View>
 
         {/* 사진 그리드 */}
-        <View style={styles.grid}>
-          {DUMMY_PHOTOS.map((photo, index) => (
-            <Pressable key={photo.id} style={styles.cell}>
-              <Image
-                source={{ uri: photo.uri }}
-                style={styles.cellImage}
-                resizeMode="cover"
-              />
-            </Pressable>
-          ))}
-        </View>
+        {loadingPosts ? (
+          <View style={styles.centerBody}>
+            <ActivityIndicator color={theme.colors.accent} />
+          </View>
+        ) : posts.length === 0 ? (
+          <View style={styles.centerBody}>
+            <Text style={styles.placeholderText}>아직 기록이 없어요</Text>
+          </View>
+        ) : (
+          <View
+            style={styles.grid}
+            onLayout={(e) => setGridWidth(e.nativeEvent.layout.width)}
+          >
+            {posts.map((post) => (
+              <Pressable
+                key={post.id}
+                style={[styles.cell, { width: cellSize, height: cellSize }]}
+                onPress={() => router.push({ pathname: '/post/[id]', params: { id: post.id } } as any)}
+              >
+                {post.coverUrl && (
+                  <Image source={{ uri: post.coverUrl }} style={styles.cellImage} resizeMode="cover" />
+                )}
+                {post.mediaCount > 1 && (
+                  <View style={styles.multiBadge}>
+                    <View style={styles.multiBadgeSquareBack} />
+                    <View style={styles.multiBadgeSquareFront} />
+                  </View>
+                )}
+              </Pressable>
+            ))}
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -192,6 +307,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#f3f4f6',
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
   },
   avatarEmoji: {
     fontSize: 44,
@@ -206,6 +326,8 @@ const styles = StyleSheet.create({
     marginTop: 6,
     fontSize: 14,
     color: theme.colors.textSecondary,
+    paddingHorizontal: 32,
+    textAlign: 'center',
   },
 
   // 통계
@@ -263,6 +385,19 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
   },
 
+  // 빈 상태 / 로딩
+  centerBody: {
+    paddingVertical: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+  placeholderText: {
+    fontSize: 14,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+  },
+
   // 사진 그리드
   grid: {
     flexDirection: 'row',
@@ -270,11 +405,40 @@ const styles = StyleSheet.create({
     gap: GRID_GAP,
   },
   cell: {
-    width: CELL_SIZE,
-    height: CELL_SIZE,
+    backgroundColor: '#f3f4f6',
+    position: 'relative',
+    overflow: 'hidden',
   },
   cellImage: {
     width: '100%',
     height: '100%',
+  },
+  multiBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 14,
+    height: 14,
+  },
+  multiBadgeSquareBack: {
+    position: 'absolute',
+    top: 0,
+    left: 4,
+    width: 10,
+    height: 10,
+    borderRadius: 2,
+    borderWidth: 1.2,
+    borderColor: 'rgba(255,255,255,0.9)',
+  },
+  multiBadgeSquareFront: {
+    position: 'absolute',
+    top: 4,
+    left: 0,
+    width: 10,
+    height: 10,
+    borderRadius: 2,
+    borderWidth: 1.2,
+    borderColor: 'rgba(255,255,255,0.9)',
+    backgroundColor: 'rgba(0,0,0,0.15)',
   },
 });
