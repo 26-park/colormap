@@ -62,7 +62,12 @@
   - Phase E-2: 게시물 삭제. `lib/posts.ts`의 `deletePost(postId)` — ⚠️순서 엄수: post_media.url 먼저 조회(Storage 경로 확보, 외부 시드 URL은 `isExternalUrl`로 제외) → posts 삭제(cascade로 post_media, G-1 트리거로 country_visits 자동 정리) → Storage 파일 삭제(best-effort, 실패해도 console.error만·고아 파일은 TODO 주기적 정리). 게시물 상세(`app/post/[id].tsx`) `···` → 바텀시트("삭제") → Alert 확인(마지막 게시물이면 "색칠도 사라진다" 안내 추가, 삭제 전 해당 나라 내 게시물 count로 판단) → 삭제.
     - **나라상세 재조회**: `app/country/[cc].tsx`의 color·posts 조회를 `useEffect` → `useFocusEffect`(B-2와 동일 패턴)로 변경 — 게시물 상세에서 삭제/작성 후 돌아오면 그리드와 색 동그라미가 즉시 갱신된다. 재조회 중에도 기존 그리드를 유지하다 교체(깜빡임 방지, `loadedPostsOnceRef`로 최초 1회만 스피너).
     - **네비게이션 스택 정리**: 게시물 상세 삭제 후, compose 저장 후 모두 `router.replace('/country/[cc]')` 대신 `router.dismissTo(...)` 사용. `country/[cc]`에 dynamic 세그먼트별 `getId`를 등록하지 않아 POP_TO가 route 이름만으로 스택에서 일치하는 화면을 찾는다는 점을 확인 — 나라상세는 각 진입 경로(게시물 상세/compose)당 스택에 항상 하나뿐이므로, 저장/삭제된 나라가 진입 나라와 달라도(compose에서 다른 나라에 핀을 찍은 경우 포함) 그 화면을 그대로 찾아 재사용하고 params만 새 나라로 덮어쓴다 — 별도 "다른 나라면 replace" 분기 불필요. `replace`로 새 인스턴스를 쌓으면 스택에 나라상세가 중복돼 뒤로가기 시 이전 화면이 다시 보이는 문제가 있었음.
-- **다음 후보**: F(나라 이름 한글화 등 다듬기) → G-3(v1 출시 점검)
+  - Phase G-3 (v1 출시 점검, 진행 중):
+    - 1단계: PRD 대비 구현 현황 감사 완료(완료/미완료/PRD 밖 필요 항목/TODO·디버그 흔적/위험 요소 정리, 2026-07-10).
+    - 보안 수정: `country_visits` INSERT/UPDATE RLS 구멍 수정 — `country_visits_owner_all`(FOR ALL)을 INSERT/UPDATE/DELETE로 분리하고 INSERT·UPDATE의 WITH CHECK에 "그 나라에 내 게시물이 있어야 함" exists 조건 추가(API 직접 호출로 게시물 없는 나라를 칠하거나 UPDATE로 country_code를 바꿔 우회하는 경로 차단). G-1 트리거(SECURITY INVOKER)가 여전히 통과하는지 롤백 트랜잭션으로 라이브 DB에서 실검증(INSERT 차단/트리거 자동색칠/트리거 자동삭제/색 UPDATE 4가지 모두 확인, 운영 데이터 무오염).
+    - 2단계: EAS 안드로이드 APK 빌드 파이프라인 점검. `eas.json`에 `cli.appVersionSource: "remote"`, `preview` 프로필에 `environment: "preview"` + `android.buildType: "apk"` 추가(기존엔 preview가 APK가 아니라 기본 AAB를 뽑는 상태였음). Supabase URL/anon key는 `EXPO_PUBLIC_*`라 비밀은 아니지만(RLS로 보호) `.env.local`이 git 미추적이라 EAS 클라우드 빌드엔 없음 — `eas env:create`(EAS 환경변수, `--environment preview`)로 주입하는 방식 채택. `android/`가 gitignore돼 있어 CNG 방식(로컬 `expo run:android`와 동일하게 매번 prebuild) — EAS 빌드 리스크 낮음.
+- **정리 예정 (우선순위 낮음)**: `expo-modules-core`가 `package.json`에 직접 의존성으로 들어가 있음(compose.tsx의 `uuid` 사용) — `expo-doctor` 경고 대상(빌드는 막지 않음). 나중에 `expo` 패키지가 재노출하는 API로 교체할 것.
+- **다음 후보**: F(나라 이름 한글화 등 다듬기) → G-3 계속(EAS 빌드 실행·검증)
 
 ## 기능 범위 (단계별 — 범위 밖은 건드리지 말 것)
 
