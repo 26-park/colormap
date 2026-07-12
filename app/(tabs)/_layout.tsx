@@ -28,14 +28,10 @@ export default function TabLayout() {
           ),
         }}
       />
+      {/* 탐색 탭은 v1.1 자리 — v1은 지도/프로필 2탭만 노출 */}
       <Tabs.Screen
         name="explore"
-        options={{
-          title: '탐색',
-          tabBarIcon: ({ color, size }) => (
-            <IconSymbol name="magnifyingglass" size={size} color={color} />
-          ),
-        }}
+        options={{ href: null }}
       />
       <Tabs.Screen
         name="profile"

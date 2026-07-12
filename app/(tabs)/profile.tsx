@@ -6,6 +6,7 @@ import { useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Dimensions,
   FlatList,
   Image,
@@ -246,9 +247,20 @@ export default function ProfileScreen() {
     loadPage(page + 1, selectedCc, sortAsc, requestIdRef.current);
   }, [hasMore, page, selectedCc, sortAsc, loadPage]);
 
-  const handleSignOut = async () => {
-    setSigningOut(true);
-    await signOut();
+  // TODO: 이 버튼은 원래 "설정"(PRD 8.5, 계정 공개범위 등)이어야 하지만
+  // 정식 설정 화면이 아직 없어 로그아웃만 확인 후 실행. 설정 화면은 별도 단계.
+  const handleSignOut = () => {
+    Alert.alert("로그아웃할까요?", undefined, [
+      { text: "취소", style: "cancel" },
+      {
+        text: "로그아웃",
+        style: "destructive",
+        onPress: async () => {
+          setSigningOut(true);
+          await signOut();
+        },
+      },
+    ]);
   };
 
   const listHeader = (
