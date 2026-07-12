@@ -66,15 +66,10 @@
     - 1단계: PRD 대비 구현 현황 감사 완료(완료/미완료/PRD 밖 필요 항목/TODO·디버그 흔적/위험 요소 정리, 2026-07-10).
     - 보안 수정: `country_visits` INSERT/UPDATE RLS 구멍 수정 — `country_visits_owner_all`(FOR ALL)을 INSERT/UPDATE/DELETE로 분리하고 INSERT·UPDATE의 WITH CHECK에 "그 나라에 내 게시물이 있어야 함" exists 조건 추가(API 직접 호출로 게시물 없는 나라를 칠하거나 UPDATE로 country_code를 바꿔 우회하는 경로 차단). G-1 트리거(SECURITY INVOKER)가 여전히 통과하는지 롤백 트랜잭션으로 라이브 DB에서 실검증(INSERT 차단/트리거 자동색칠/트리거 자동삭제/색 UPDATE 4가지 모두 확인, 운영 데이터 무오염).
     - 2단계: EAS 안드로이드 APK 빌드 파이프라인 점검. `eas.json`에 `cli.appVersionSource: "remote"`, `preview` 프로필에 `environment: "preview"` + `android.buildType: "apk"` 추가(기존엔 preview가 APK가 아니라 기본 AAB를 뽑는 상태였음). Supabase URL/anon key는 `EXPO_PUBLIC_*`라 비밀은 아니지만(RLS로 보호) `.env.local`이 git 미추적이라 EAS 클라우드 빌드엔 없음 — `eas env:create`(EAS 환경변수, `--environment preview`)로 주입하는 방식 채택. `android/`가 gitignore돼 있어 CNG 방식(로컬 `expo run:android`와 동일하게 매번 prebuild) — EAS 빌드 리스크 낮음.
+    - 3단계: EAS 안드로이드 preview APK 빌드 성공 + 실기기 검증 완료(2026-07-11). `eas init`으로 `app.json`에 `extra.eas.projectId` + `owner` 생성됨. 실기기에서 로그인·지도·사진·GPS 위치 모두 정상 동작 확인 — APK 파이프라인 검증 끝.
 - **정리 예정 (우선순위 낮음)**: `expo-modules-core`가 `package.json`에 직접 의존성으로 들어가 있음(compose.tsx의 `uuid` 사용) — `expo-doctor` 경고 대상(빌드는 막지 않음). 나중에 `expo` 패키지가 재노출하는 API로 교체할 것.
-- **다음: EAS 안드로이드 빌드(APK) 실행** — `eas.json` 준비 완료(`preview` 프로필: `environment: "preview"` + `android.buildType: "apk"`, `cli.appVersionSource: "remote"`). 실행할 명령(순서대로):
-  1. `npx eas-cli login`
-  2. `npx eas-cli init`
-  3. `npx eas-cli env:create --name EXPO_PUBLIC_SUPABASE_URL --value "https://ueokykxnutelxoieksvw.supabase.co" --environment preview --visibility plaintext`
-  4. `npx eas-cli env:create --name EXPO_PUBLIC_SUPABASE_ANON_KEY --value "<.env.local의 EXPO_PUBLIC_SUPABASE_ANON_KEY 값>" --environment preview --visibility plaintext`
-  5. `npx eas-cli build --platform android --profile preview`
-- **그 뒤 후보 (v1 출시 점검 punch list, 우선순위 미정)**:
-  - 소셜 로그인(카카오·네이버·Apple·Google) — EAS 빌드 완료 후 keystore SHA-1 지문이 나와야 Google/카카오 콘솔에 등록 가능, 그 다음 착수
+- **다음 후보 (v1 출시 점검 punch list, 우선순위 미정)**:
+  - 소셜 로그인(카카오·네이버·Apple·Google) — EAS 빌드 완료로 keystore SHA-1 지문 확보 가능해졌으니 Google/카카오 콘솔 등록부터 착수
   - 시드 테스트 데이터 정리(`scripts/seed-test-data.sql`로 들어간 KR/JP 게시물, 단일 Supabase 프로젝트를 개발/운영 겸용 중인 문제)
   - 앱 아이콘/스플래시 이미지 교체(현재 Expo 기본 템플릿 이미지)
   - 개인정보처리방침 (스토어 심사 필수, 위치·사진 데이터 다루므로)
