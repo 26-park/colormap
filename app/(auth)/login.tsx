@@ -13,10 +13,12 @@ import { Link } from 'expo-router';
 import { useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '@/context/auth';
+import { useGoogleSignIn } from '@/hooks/use-google-sign-in';
 import { theme } from '@/constants/theme';
 
 export default function LoginScreen() {
   const { signIn } = useAuth();
+  const { signInWithGoogle, loading: googleLoading, error: googleError } = useGoogleSignIn();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -99,7 +101,28 @@ export default function LoginScreen() {
               )}
             </Pressable>
 
-            {/* TODO: 소셜 로그인 (카카오·네이버·Apple·Google) — 다음 단계에서 추가 */}
+            {/* TODO: 소셜 로그인 (카카오·네이버·Apple) — Google 다음 단계에서 추가 */}
+
+            <View style={styles.divider}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>또는</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            {googleError && <Text style={styles.errorText}>{googleError}</Text>}
+
+            <Pressable
+              style={({ pressed }) => [styles.googleButton, pressed && styles.buttonPressed]}
+              onPress={signInWithGoogle}
+              disabled={googleLoading}
+            >
+              {googleLoading ? (
+                <ActivityIndicator color={theme.colors.text} />
+              ) : (
+                // TODO: 구글 공식 로고 아이콘 추가 (브랜드 가이드라인 준수는 나중)
+                <Text style={styles.googleButtonText}>Google로 계속하기</Text>
+              )}
+            </Pressable>
           </View>
 
           {/* 회원가입 링크 */}
@@ -183,6 +206,35 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#fff',
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 4,
+    gap: 12,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: theme.colors.border,
+  },
+  dividerText: {
+    fontSize: 13,
+    color: theme.colors.textSecondary,
+  },
+  googleButton: {
+    height: 52,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.button,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+  },
+  googleButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: theme.colors.text,
   },
   footer: {
     flexDirection: 'row',

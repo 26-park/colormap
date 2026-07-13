@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { type Session, type AuthError } from '@supabase/supabase-js';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { supabase } from '@/lib/supabase';
+import '@/lib/googleAuth'; // GoogleSignin.configure()를 앱 시작 시 1회 실행(AuthProvider가 루트에서 항상 마운트되므로)
 
 type SignUpResult = {
   error: string | null;
@@ -74,6 +76,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     await supabase.auth.signOut();
+    // 구글 로그인이 아니었어도 안전(그냥 아무 캐시된 구글 세션도 없는 상태) — best-effort
+    await GoogleSignin.signOut().catch(() => {});
   };
 
   const refreshProfile = useCallback(async () => {
