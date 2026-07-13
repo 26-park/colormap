@@ -47,6 +47,7 @@ export default function ProfileScreen() {
   const [bio, setBio] = useState<string | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [signingOut, setSigningOut] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
 
   // 통계 3개 — 필터에 영향받지 않는 전체 기준
   const [stats, setStats] = useState<Stats>({
@@ -263,6 +264,57 @@ export default function ProfileScreen() {
     ]);
   };
 
+  // P0 계정 삭제. Edge Function(supabase/functions/delete-account)이 본인 확인(JWT) +
+  // Storage 정리 + auth.admin.deleteUser()로 DB cascade까지 전부 처리 — 여기선 호출과
+  // 로그인 세션 정리만 담당한다.
+  const confirmDeleteAccount = async () => {
+    setDeletingAccount(true);
+    try {
+      const { error } = await supabase.functions.invoke("delete-account");
+      if (error) {
+        console.error("[account-delete] delete-account 호출 실패:", error);
+        Alert.alert("삭제하지 못했어요", "다시 시도해주세요.");
+        setDeletingAccount(false);
+        return;
+      }
+      // auth.admin.deleteUser()로 서버 세션은 이미 무효화됨 — signOut()으로 로컬
+      // 세션/Google 캐시까지 정리해야 "유저 없는데 세션만 남은" 상태를 피할 수 있다.
+      await signOut();
+    } catch (err) {
+      console.error("[account-delete] 예외:", err);
+      Alert.alert("삭제하지 못했어요", "다시 시도해주세요.");
+      setDeletingAccount(false);
+    }
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      "계정을 삭제할까요?",
+      "계정을 삭제하면 모든 기록과 사진이 영구 삭제되며 되돌릴 수 없습니다.",
+      [
+        { text: "취소", style: "cancel" },
+        {
+          text: "삭제",
+          style: "destructive",
+          onPress: () => {
+            Alert.alert(
+              "정말 삭제하시겠어요?",
+              "이 작업은 되돌릴 수 없습니다. 계정과 모든 기록, 사진이 영구적으로 사라집니다.",
+              [
+                { text: "취소", style: "cancel" },
+                {
+                  text: "영구 삭제",
+                  style: "destructive",
+                  onPress: confirmDeleteAccount,
+                },
+              ],
+            );
+          },
+        },
+      ],
+    );
+  };
+
   const listHeader = (
     <View>
       {/* 헤더 */}
@@ -442,12 +494,25 @@ export default function ProfileScreen() {
         onEndReached={handleEndReached}
         onEndReachedThreshold={0.5}
         ListFooterComponent={
-          loadingMore ? (
-            <ActivityIndicator
-              color={theme.colors.accent}
-              style={styles.footerSpinner}
-            />
-          ) : null
+          <View>
+            {loadingMore ? (
+              <ActivityIndicator
+                color={theme.colors.accent}
+                style={styles.footerSpinner}
+              />
+            ) : null}
+            <Pressable
+              style={styles.deleteAccountBtn}
+              onPress={handleDeleteAccount}
+              disabled={deletingAccount}
+            >
+              {deletingAccount ? (
+                <ActivityIndicator size="small" color={theme.colors.error} />
+              ) : (
+                <Text style={styles.deleteAccountText}>계정 삭제</Text>
+              )}
+            </Pressable>
+          </View>
         }
       />
     </SafeAreaView>
@@ -642,6 +707,18 @@ const styles = StyleSheet.create({
   },
   footerSpinner: {
     paddingVertical: 20,
+  },
+  deleteAccountBtn: {
+    alignSelf: "center",
+    marginTop: 40,
+    marginBottom: 24,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+  },
+  deleteAccountText: {
+    fontSize: 13,
+    color: theme.colors.error,
+    textDecorationLine: "underline",
   },
 
   // 사진 그리드
