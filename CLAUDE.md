@@ -76,11 +76,15 @@
     - 6단계: **계정 삭제 기능 완료**(2026-07-13) — Supabase 공식 패턴대로 `supabase/functions/delete-account`(Edge Function, service_role)에서 `auth.admin.deleteUser()` 한 번으로 처리, DB 쪽은 전부 FK cascade(profiles→posts→post_media/comments/post_likes, country_visits, friendships)와 G-1 트리거로 자동 정리됨(앱이 개별 테이블을 지우지 않음). Storage(`post-media` 버킷)는 FK 관계가 없어 별도로 `posts/{userId}` prefix `list()`+`remove()`(2단계 재귀, best-effort). 본인 확인은 요청 헤더의 JWT로 `auth.getUser()`를 거쳐 얻은 userId만 사용(body로 안 받음 — 남 계정 삭제 방지). 앱 쪽은 프로필 탭 그리드 최하단(`ListFooterComponent`)에 "계정 삭제" 텍스트 링크 + 2단계 `Alert` 확인(destructive) → `supabase.functions.invoke('delete-account')` → 성공 시 기존 `signOut()` 재사용(로컬 세션+Google 캐시 정리). mini 계정으로 전체 흐름(삭제→signOut→재로그인 시 신규 온보딩) 실기기 검증 완료.
 - **정리 예정 (우선순위 낮음)**: `expo-modules-core`가 `package.json`에 직접 의존성으로 들어가 있음(compose.tsx의 `uuid` 사용) — `expo-doctor` 경고 대상(빌드는 막지 않음). 나중에 `expo` 패키지가 재노출하는 API로 교체할 것.
 - **출시 후 TODO**: Expo SDK 54 → 56 업그레이드(현재는 Expo Go 호환 위해 54 유지 중이었지만, 이제 네이티브 모듈들 때문에 이미 Expo Go 자체가 불가능해졌으므로 그 이유는 사실상 소멸 — 그래도 출시 안정성 위해 업그레이드는 출시 이후로 미룸).
-- **다음: 카카오·네이버·Apple 로그인** — 구글 다음 순서로 확정. Google 로그인 구현 때 확립된 패턴(공통 훅 + provider-무관 온보딩 분기)을 그대로 따라가면 됨.
+- **⭐ 소셜 로그인 정책 확정 (v1 범위, 못박기 — 2026-07-13)**: v1은 **이메일 + 구글 로그인만**. 카카오·네이버·애플은 v1에 넣지 않는다.
+  - 카카오/네이버: Supabase Auth가 기본 제공하는 provider가 아니라 커스텀 OAuth 구현이 필요 — v1 범위 밖.
+  - 애플: iOS 정식 출시할 때만 추가한다. 다른 소셜 로그인이 있으면 Apple 로그인 필수라는 스토어 정책 + Apple Developer Program($99/년) 가입이 전제라, 그 전까진 손대지 않는다.
+  - **이후 세션에서 "다른 소셜 로그인 추가하자"는 방향으로 새지 말 것** — 이미 검토 후 확정한 결정임.
 - **v1 출시 점검 나머지 후보**:
   - **[P0 필수]**
-    - 시드 테스트 데이터 정리(`scripts/seed-test-data.sql`로 들어간 KR/JP 게시물, 단일 Supabase 프로젝트를 개발/운영 겸용 중인 문제 — 프로덕션에 테스트 게시물이 살아있음). 진행: DB 실사 결과 스크립트 자체는 실행된 적 없음(gp123 계정 posts 5건은 실제 앱으로 만든 수동 테스트 게시물, 남기기로 결정) — 대신 발견된 country_visits 고아 행 DZ(과거 RLS 갭 시기 잔재, 트리거는 정상 확인됨) 1건만 삭제 완료(2026-07-13, SQL 직접 실행·마이그레이션 아님).
-    - 개인정보처리방침 / 이용약관 (스토어 심사 필수, 위치·사진 데이터 다루므로)
+    - ✅ 시드 테스트 데이터 정리 — 완료. DB 실사 결과 스크립트(`scripts/seed-test-data.sql`) 자체는 실행된 적 없음(gp123 계정 posts 5건은 실제 앱으로 만든 수동 테스트 게시물, 남기기로 결정) — 대신 발견된 country_visits 고아 행 DZ(과거 RLS 갭 시기 잔재, 트리거는 정상 확인됨) 1건만 삭제 완료(2026-07-13, SQL 직접 실행·마이그레이션 아님).
+    - ✅ 계정 삭제 기능 — 완료 (위 G-3 6단계 참고)
+    - **개인정보처리방침 / 이용약관 (스토어 심사 필수, 위치·사진 데이터 다루므로) — P0 마지막 남은 항목**
   - **[P1 빠름]**
     - 앱 아이콘/스플래시 이미지 교체(현재 Expo 기본 템플릿 이미지 — 2026-07-12 정리 때 dev client와 Expo Go가 아이콘이 비슷해 혼선을 일으킨 원인이기도 했음)
   - **[P2 조정]**
