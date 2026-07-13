@@ -67,18 +67,17 @@
     - 보안 수정: `country_visits` INSERT/UPDATE RLS 구멍 수정 — `country_visits_owner_all`(FOR ALL)을 INSERT/UPDATE/DELETE로 분리하고 INSERT·UPDATE의 WITH CHECK에 "그 나라에 내 게시물이 있어야 함" exists 조건 추가(API 직접 호출로 게시물 없는 나라를 칠하거나 UPDATE로 country_code를 바꿔 우회하는 경로 차단). G-1 트리거(SECURITY INVOKER)가 여전히 통과하는지 롤백 트랜잭션으로 라이브 DB에서 실검증(INSERT 차단/트리거 자동색칠/트리거 자동삭제/색 UPDATE 4가지 모두 확인, 운영 데이터 무오염).
     - 2단계: EAS 안드로이드 APK 빌드 파이프라인 점검. `eas.json`에 `cli.appVersionSource: "remote"`, `preview` 프로필에 `environment: "preview"` + `android.buildType: "apk"` 추가(기존엔 preview가 APK가 아니라 기본 AAB를 뽑는 상태였음). Supabase URL/anon key는 `EXPO_PUBLIC_*`라 비밀은 아니지만(RLS로 보호) `.env.local`이 git 미추적이라 EAS 클라우드 빌드엔 없음 — `eas env:create`(EAS 환경변수, `--environment preview`)로 주입하는 방식 채택. `android/`가 gitignore돼 있어 CNG 방식(로컬 `expo run:android`와 동일하게 매번 prebuild) — EAS 빌드 리스크 낮음.
     - 3단계: EAS 안드로이드 preview APK 빌드 성공 + 실기기 검증 완료(2026-07-11). `eas init`으로 `app.json`에 `extra.eas.projectId` + `owner` 생성됨. 실기기에서 로그인·지도·사진·GPS 위치 모두 정상 동작 확인 — APK 파이프라인 검증 끝. 빌드는 expo.dev의 `tintrail` 프로젝트에서 확인 가능.
+    - 4단계: "작은 정리 항목" 4개 완료(2026-07-12, 커밋 `47b1909`) — 탐색 탭 `href: null`로 숨김(하단 탭 지도/프로필 2개만), 프로필 ⚙️ 로그아웃에 `Alert` 확인 다이얼로그 추가(정식 설정 화면은 여전히 없음, TODO로 남김), Expo 템플릿 스캐폴드 일괄 제거(`app/modal.tsx` + 연쇄적으로 unused였던 `themed-text/view`·`collapsible`·`parallax-scroll-view`·`hello-wave`·`external-link`·`haptic-tab`·`use-theme-color`·`use-color-scheme`·`react-logo` 이미지들, import 그래프 추적으로 확인 후 삭제), PRD 갱신(장소검색·3D 지구본 토글을 v1.1로 명시). 실기기 검증 중 "explore 탭이 안 사라진다"는 혼선이 있었는데 원인은 코드가 아니라 **Expo Go로 QR 스캔해서 들어간 것**이었음(이 프로젝트는 네이티브 모듈 때문에 Expo Go 자체가 불가) — 앱 아이콘이 아직 기본 Expo 템플릿이라 dev client와 Expo Go가 헷갈리기 쉬웠던 것도 원인. dev client(`com.tintrail.app`, 이름 "Tintrail")로 재확인 후 정상 동작 확인됨.
 - **정리 예정 (우선순위 낮음)**: `expo-modules-core`가 `package.json`에 직접 의존성으로 들어가 있음(compose.tsx의 `uuid` 사용) — `expo-doctor` 경고 대상(빌드는 막지 않음). 나중에 `expo` 패키지가 재노출하는 API로 교체할 것.
-- **다음: v1 출시 점검 나머지** — 무엇부터 할지는 아직 미정(사용자가 우선순위 고민 중). 후보 목록:
+- **다음: 소셜 로그인(구글)** — 사용자가 확정. 카카오·네이버·Apple보다 먼저 Google부터 착수. EAS 빌드 완료로 keystore SHA-1 지문 확보 가능해졌으니 Google Cloud Console(OAuth 클라이언트) 등록부터 시작.
+- **v1 출시 점검 나머지 후보** (구글 로그인 이후 순서는 아직 미정):
   - **[P0 필수]**
-    - 소셜 로그인(카카오·네이버·Apple·Google) — EAS 빌드 완료로 keystore SHA-1 지문 확보 가능해졌으니 Google/카카오 콘솔 등록부터 착수
+    - 카카오·네이버·Apple 로그인(구글 다음 순서)
     - 시드 테스트 데이터 정리(`scripts/seed-test-data.sql`로 들어간 KR/JP 게시물, 단일 Supabase 프로젝트를 개발/운영 겸용 중인 문제 — 프로덕션에 테스트 게시물이 살아있음)
     - 개인정보처리방침 / 이용약관 (스토어 심사 필수, 위치·사진 데이터 다루므로)
     - 계정 삭제 기능 (스토어 정책상 필요할 수 있음)
-    - 프로필 ⚙️ 버튼 — 지금 확인 없이 바로 로그아웃함, 확인 다이얼로그 추가(계정 공개범위 설정 화면 자체가 아직 없다는 점과 별개로 우선 처리)
   - **[P1 빠름]**
-    - 탐색(돋보기) 탭 숨기기 — 지금 `(tabs)/_layout.tsx`에 compose처럼 `href: null` 없이 실제 4번째 탭으로 노출 중(v1은 3탭만이어야 함)
-    - Expo 템플릿 잔재 제거(`modal.tsx` 등 보일러플레이트 화면)
-    - 앱 아이콘/스플래시 이미지 교체(현재 Expo 기본 템플릿 이미지)
+    - 앱 아이콘/스플래시 이미지 교체(현재 Expo 기본 템플릿 이미지 — 2026-07-12 정리 때 dev client와 Expo Go가 아이콘이 비슷해 혼선을 일으킨 원인이기도 했음)
   - **[P2 조정]**
     - 나라 이름 한글화(현재 GeoJSON `properties.nm`이 영문)
     - Pretendard 폰트 적용(디자인 토큰에 확정돼 있으나 아직 미적용)
@@ -86,7 +85,7 @@
     - 에러 상태 / 빈 상태(empty state) UI 구분
     - 게시물 공개범위 사후 변경(현재 작성 시점에만 지정 가능)
     - 계정 공개범위(public/private) 토글 UI (PRD 9장엔 컬럼 있으나 설정 화면 없음)
-- **PRD 갱신 필요**: 장소검색(지오코딩)·지구본(3D) 관련 서술이 v1으로 남아있는 부분이 있음 — 실제로는 v1.1로 미룬 결정과 문서가 불일치. docs/PRD.md에서 해당 항목을 v1.1로 명시할 것.
+    - 정식 설정 화면 신설(현재 ⚙️는 로그아웃 확인만 함 — 4단계 TODO)
 
 ## 기능 범위 (단계별 — 범위 밖은 건드리지 말 것)
 
