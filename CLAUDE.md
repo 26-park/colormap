@@ -74,6 +74,7 @@
       - ⚠️ **Supabase "Skip Nonce Check" 필수 (Android)**: `@react-native-google-signin/google-signin`의 무료 `GoogleSignin.signIn()`은 Android에서 nonce를 지원하지 않음(iOS 전용·유료 기능). Supabase의 `signInWithIdToken`은 기본적으로 nonce 검증을 하므로, 그대로면 "Passed nonce and nonce in id_token should either both exist or not" 에러로 항상 막힘. **Supabase 대시보드 → Authentication → Providers → Google → Skip Nonce Check를 켜야 함**(켜짐 확인됨). nonce 검증 우회이므로 이 provider를 Google 외 다른 용도로 재사용하지 않도록 주의.
       - 실기기 전체 흐름 검증 완료: 신규 로그인→온보딩(username만, 구글 이름/사진 자동 채우기 없음, A안 확정대로)→메인, 재방문 시 온보딩 없이 바로 메인, 로그아웃 후 계정 재선택 모두 정상.
     - 6단계: **계정 삭제 기능 완료**(2026-07-13) — Supabase 공식 패턴대로 `supabase/functions/delete-account`(Edge Function, service_role)에서 `auth.admin.deleteUser()` 한 번으로 처리, DB 쪽은 전부 FK cascade(profiles→posts→post_media/comments/post_likes, country_visits, friendships)와 G-1 트리거로 자동 정리됨(앱이 개별 테이블을 지우지 않음). Storage(`post-media` 버킷)는 FK 관계가 없어 별도로 `posts/{userId}` prefix `list()`+`remove()`(2단계 재귀, best-effort). 본인 확인은 요청 헤더의 JWT로 `auth.getUser()`를 거쳐 얻은 userId만 사용(body로 안 받음 — 남 계정 삭제 방지). 앱 쪽은 프로필 탭 그리드 최하단(`ListFooterComponent`)에 "계정 삭제" 텍스트 링크 + 2단계 `Alert` 확인(destructive) → `supabase.functions.invoke('delete-account')` → 성공 시 기존 `signOut()` 재사용(로컬 세션+Google 캐시 정리). mini 계정으로 전체 흐름(삭제→signOut→재로그인 시 신규 온보딩) 실기기 검증 완료.
+    - 7단계: **개인정보처리방침/이용약관 완료**(2026-07-14, 커밋 `c254223`) — `docs/legal/privacy.html`·`terms.html` 작성(본문은 사용자가 직접 제공, 번호 항목은 `<h2>`/`<h3>`, 목록은 `<ul>`/`<ol>`로 구조화) 후 GitHub Pages(저장소 `26-park/colormap`, `main` 브랜치 `/docs` 폴더)로 호스팅. 최종 URL `https://26-park.github.io/colormap/legal/privacy.html`(terms도 동일 패턴) — `constants/legal.ts`의 `LEGAL_URLS`에 한 곳에서만 정의, sign-up.tsx 약관 동의 안내와 profile.tsx 계정 삭제 근처에 `Linking.openURL`로 연결.
 - **정리 예정 (우선순위 낮음)**: `expo-modules-core`가 `package.json`에 직접 의존성으로 들어가 있음(compose.tsx의 `uuid` 사용) — `expo-doctor` 경고 대상(빌드는 막지 않음). 나중에 `expo` 패키지가 재노출하는 API로 교체할 것.
 - **출시 후 TODO**: Expo SDK 54 → 56 업그레이드(현재는 Expo Go 호환 위해 54 유지 중이었지만, 이제 네이티브 모듈들 때문에 이미 Expo Go 자체가 불가능해졌으므로 그 이유는 사실상 소멸 — 그래도 출시 안정성 위해 업그레이드는 출시 이후로 미룸).
 - **⭐ 소셜 로그인 정책 확정 (v1 범위, 못박기 — 2026-07-13)**: v1은 **이메일 + 구글 로그인만**. 카카오·네이버·애플은 v1에 넣지 않는다.
@@ -81,12 +82,13 @@
   - 애플: iOS 정식 출시할 때만 추가한다. 다른 소셜 로그인이 있으면 Apple 로그인 필수라는 스토어 정책 + Apple Developer Program($99/년) 가입이 전제라, 그 전까진 손대지 않는다.
   - **이후 세션에서 "다른 소셜 로그인 추가하자"는 방향으로 새지 말 것** — 이미 검토 후 확정한 결정임.
 - **v1 출시 점검 나머지 후보**:
-  - **[P0 필수]**
+  - **[P0 필수] — ✅ 전부 완료 (2026-07-14)**
     - ✅ 시드 테스트 데이터 정리 — 완료. DB 실사 결과 스크립트(`scripts/seed-test-data.sql`) 자체는 실행된 적 없음(gp123 계정 posts 5건은 실제 앱으로 만든 수동 테스트 게시물, 남기기로 결정) — 대신 발견된 country_visits 고아 행 DZ(과거 RLS 갭 시기 잔재, 트리거는 정상 확인됨) 1건만 삭제 완료(2026-07-13, SQL 직접 실행·마이그레이션 아님).
     - ✅ 계정 삭제 기능 — 완료 (위 G-3 6단계 참고)
-    - **개인정보처리방침 / 이용약관 (스토어 심사 필수, 위치·사진 데이터 다루므로) — P0 마지막 남은 항목**
-  - **[P1 빠름]**
+    - ✅ 개인정보처리방침 / 이용약관 — 완료 (위 G-3 7단계 참고, GitHub Pages 호스팅 + 앱 링크 연결)
+  - **[P1 빠름, 다음 후보]**
     - 앱 아이콘/스플래시 이미지 교체(현재 Expo 기본 템플릿 이미지 — 2026-07-12 정리 때 dev client와 Expo Go가 아이콘이 비슷해 혼선을 일으킨 원인이기도 했음)
+    - 정식 설정 화면 신설(현재 ⚙️는 로그아웃 확인만 함 — 4단계 TODO)
   - **[P2 조정]**
     - 나라 이름 한글화(현재 GeoJSON `properties.nm`이 영문)
     - Pretendard 폰트 적용(디자인 토큰에 확정돼 있으나 아직 미적용)
@@ -94,7 +96,8 @@
     - 에러 상태 / 빈 상태(empty state) UI 구분
     - 게시물 공개범위 사후 변경(현재 작성 시점에만 지정 가능)
     - 계정 공개범위(public/private) 토글 UI (PRD 9장엔 컬럼 있으나 설정 화면 없음)
-    - 정식 설정 화면 신설(현재 ⚙️는 로그아웃 확인만 함 — 4단계 TODO)
+  - **[출시]**
+    - 구글 플레이 콘솔 개발자 등록($25) + AAB 빌드(EAS, preview는 APK라 별도 프로필 필요) + 스토어 등록 자료(스크린샷, 설명, 개인정보처리방침 URL 연결 등) 준비
 
 ## 기능 범위 (단계별 — 범위 밖은 건드리지 말 것)
 
