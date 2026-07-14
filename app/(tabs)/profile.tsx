@@ -1,4 +1,5 @@
 import { theme } from "@/constants/theme";
+import { LEGAL_URLS } from "@/constants/legal";
 import { useAuth } from "@/context/auth";
 import { resolveMediaUrls } from "@/lib/media";
 import { supabase } from "@/lib/supabase";
@@ -10,6 +11,7 @@ import {
   Dimensions,
   FlatList,
   Image,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -512,6 +514,16 @@ export default function ProfileScreen() {
                 <Text style={styles.deleteAccountText}>계정 삭제</Text>
               )}
             </Pressable>
+
+            <View style={styles.legalRow}>
+              <Pressable onPress={() => Linking.openURL(LEGAL_URLS.terms)}>
+                <Text style={styles.legalLinkText}>이용약관</Text>
+              </Pressable>
+              <Text style={styles.legalDivider}>·</Text>
+              <Pressable onPress={() => Linking.openURL(LEGAL_URLS.privacy)}>
+                <Text style={styles.legalLinkText}>개인정보처리방침</Text>
+              </Pressable>
+            </View>
           </View>
         }
       />
@@ -719,6 +731,21 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: theme.colors.error,
     textDecorationLine: "underline",
+  },
+  legalRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 32,
+  },
+  legalLinkText: {
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+  },
+  legalDivider: {
+    fontSize: 12,
+    color: theme.colors.border,
   },
 
   // 사진 그리드

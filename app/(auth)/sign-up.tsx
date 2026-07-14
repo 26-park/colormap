@@ -1,6 +1,7 @@
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -15,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '@/context/auth';
 import { useGoogleSignIn } from '@/hooks/use-google-sign-in';
 import { theme } from '@/constants/theme';
+import { LEGAL_URLS } from '@/constants/legal';
 
 export default function SignUpScreen() {
   const { signUp } = useAuth();
@@ -164,6 +166,25 @@ export default function SignUpScreen() {
               </Pressable>
             </Link>
           </View>
+
+          {/* 약관 동의 안내 */}
+          <Text style={styles.legalText}>
+            가입 시{' '}
+            <Text
+              style={styles.legalLink}
+              onPress={() => Linking.openURL(LEGAL_URLS.terms)}
+            >
+              이용약관
+            </Text>{' '}
+            및{' '}
+            <Text
+              style={styles.legalLink}
+              onPress={() => Linking.openURL(LEGAL_URLS.privacy)}
+            >
+              개인정보처리방침
+            </Text>
+            에 동의하는 것으로 간주됩니다.
+          </Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -279,6 +300,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: theme.colors.accent,
+  },
+  legalText: {
+    marginTop: 16,
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  legalLink: {
+    color: theme.colors.accent,
+    textDecorationLine: 'underline',
   },
   // 이메일 인증 대기 화면
   verifyContainer: {
