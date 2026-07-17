@@ -21,6 +21,7 @@ import { supabase } from '@/lib/supabase';
 import { resolveMediaUrls } from '@/lib/media';
 import { deletePost, type PostVisibility } from '@/lib/posts';
 import { getCountryName } from '@/lib/countryFromCoord';
+import { getCountryNameKo } from '@/lib/countryNamesKo';
 import { useAuth } from '@/context/auth';
 import countriesGeoJSON from '@/assets/geo/countries.json';
 
@@ -146,7 +147,7 @@ export default function PostDetailScreen() {
     setActiveIndex(index);
   }
 
-  const countryName = post ? getCountryName(post.countryCode) : null;
+  const countryName = post ? getCountryNameKo(post.countryCode, getCountryName(post.countryCode) ?? undefined) : null;
   const isOwner = !!post && !!session?.user.id && post.userId === session.user.id;
 
   // 삭제 확인 다이얼로그 문구용 — 이 나라의 내 게시물이 지금 게시물 1개뿐이면

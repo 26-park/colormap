@@ -18,6 +18,7 @@ import { COLOR_PALETTE } from '@/constants/palette';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/auth';
 import { resolveMediaUrls } from '@/lib/media';
+import { getCountryNameKo } from '@/lib/countryNamesKo';
 
 const GRID_GAP = 1;
 const NUM_COLS = 3;
@@ -180,7 +181,7 @@ export default function CountryDetailScreen() {
         </Pressable>
 
         <View style={styles.titleRow}>
-          <Text style={styles.title} numberOfLines={1}>{nm}</Text>
+          <Text style={styles.title} numberOfLines={1}>{getCountryNameKo(cc, nm)}</Text>
           <Pressable
             style={[
               styles.colorDot,

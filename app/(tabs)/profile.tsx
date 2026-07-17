@@ -2,6 +2,7 @@ import { theme } from "@/constants/theme";
 import { LEGAL_URLS } from "@/constants/legal";
 import { useAuth } from "@/context/auth";
 import { resolveMediaUrls } from "@/lib/media";
+import { getCountryNameKo } from "@/lib/countryNamesKo";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -133,9 +134,9 @@ export default function ProfileScreen() {
         console.error("my_post_countries 조회 실패:", error);
         return;
       }
-      setChips(
-        (data ?? []).map((row: { country_code: string }) => row.country_code),
-      );
+      const codes: string[] = (data ?? []).map((row: { country_code: string }) => row.country_code);
+      codes.sort((a: string, b: string) => getCountryNameKo(a).localeCompare(getCountryNameKo(b), "ko"));
+      setChips(codes);
     });
   }, [userId]);
 
@@ -418,7 +419,7 @@ export default function ProfileScreen() {
                 selectedCc === cc && styles.chipTextSelected,
               ]}
             >
-              {cc}
+              {getCountryNameKo(cc)}
             </Text>
           </Pressable>
         ))}

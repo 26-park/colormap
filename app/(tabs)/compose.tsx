@@ -23,6 +23,7 @@ import { theme } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/auth';
 import { getCountryFromCoord, getCountryCentroid, type CountryMatch } from '@/lib/countryFromCoord';
+import { getCountryNameKo } from '@/lib/countryNamesKo';
 import { savePost, type PostVisibility } from '@/lib/posts';
 import countriesGeoJSON from '@/assets/geo/countries.json';
 
@@ -233,7 +234,7 @@ export default function ComposeScreen() {
           {countryMatch ? (
             <View style={styles.headerSubtitleRow}>
               <View style={styles.headerDot} />
-              <Text style={styles.headerSubtitle}>{countryMatch.nm}</Text>
+              <Text style={styles.headerSubtitle}>{getCountryNameKo(countryMatch.cc, countryMatch.nm)}</Text>
             </View>
           ) : (
             <Text style={styles.headerSubtitlePlaceholder}>위치를 선택해주세요</Text>
