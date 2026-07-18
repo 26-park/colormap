@@ -1,5 +1,4 @@
 import { theme } from "@/constants/theme";
-import { LEGAL_URLS } from "@/constants/legal";
 import { useAuth } from "@/context/auth";
 import { resolveMediaUrls } from "@/lib/media";
 import { getCountryNameKo } from "@/lib/countryNamesKo";
@@ -8,11 +7,9 @@ import { useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Dimensions,
   FlatList,
   Image,
-  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -41,7 +38,7 @@ type Stats = {
 };
 
 export default function ProfileScreen() {
-  const { session, signOut } = useAuth();
+  const { session } = useAuth();
   const router = useRouter();
   const userId = session?.user.id;
 
@@ -49,8 +46,6 @@ export default function ProfileScreen() {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [bio, setBio] = useState<string | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
-  const [signingOut, setSigningOut] = useState(false);
-  const [deletingAccount, setDeletingAccount] = useState(false);
 
   // 통계 3개 — 필터에 영향받지 않는 전체 기준
   const [stats, setStats] = useState<Stats>({
@@ -251,73 +246,6 @@ export default function ProfileScreen() {
     loadPage(page + 1, selectedCc, sortAsc, requestIdRef.current);
   }, [hasMore, page, selectedCc, sortAsc, loadPage]);
 
-  // TODO: 이 버튼은 원래 "설정"(PRD 8.5, 계정 공개범위 등)이어야 하지만
-  // 정식 설정 화면이 아직 없어 로그아웃만 확인 후 실행. 설정 화면은 별도 단계.
-  const handleSignOut = () => {
-    Alert.alert("로그아웃할까요?", undefined, [
-      { text: "취소", style: "cancel" },
-      {
-        text: "로그아웃",
-        style: "destructive",
-        onPress: async () => {
-          setSigningOut(true);
-          await signOut();
-        },
-      },
-    ]);
-  };
-
-  // P0 계정 삭제. Edge Function(supabase/functions/delete-account)이 본인 확인(JWT) +
-  // Storage 정리 + auth.admin.deleteUser()로 DB cascade까지 전부 처리 — 여기선 호출과
-  // 로그인 세션 정리만 담당한다.
-  const confirmDeleteAccount = async () => {
-    setDeletingAccount(true);
-    try {
-      const { error } = await supabase.functions.invoke("delete-account");
-      if (error) {
-        console.error("[account-delete] delete-account 호출 실패:", error);
-        Alert.alert("삭제하지 못했어요", "다시 시도해주세요.");
-        setDeletingAccount(false);
-        return;
-      }
-      // auth.admin.deleteUser()로 서버 세션은 이미 무효화됨 — signOut()으로 로컬
-      // 세션/Google 캐시까지 정리해야 "유저 없는데 세션만 남은" 상태를 피할 수 있다.
-      await signOut();
-    } catch (err) {
-      console.error("[account-delete] 예외:", err);
-      Alert.alert("삭제하지 못했어요", "다시 시도해주세요.");
-      setDeletingAccount(false);
-    }
-  };
-
-  const handleDeleteAccount = () => {
-    Alert.alert(
-      "계정을 삭제할까요?",
-      "계정을 삭제하면 모든 기록과 사진이 영구 삭제되며 되돌릴 수 없습니다.",
-      [
-        { text: "취소", style: "cancel" },
-        {
-          text: "삭제",
-          style: "destructive",
-          onPress: () => {
-            Alert.alert(
-              "정말 삭제하시겠어요?",
-              "이 작업은 되돌릴 수 없습니다. 계정과 모든 기록, 사진이 영구적으로 사라집니다.",
-              [
-                { text: "취소", style: "cancel" },
-                {
-                  text: "영구 삭제",
-                  style: "destructive",
-                  onPress: confirmDeleteAccount,
-                },
-              ],
-            );
-          },
-        },
-      ],
-    );
-  };
-
   const listHeader = (
     <View>
       {/* 헤더 */}
@@ -325,17 +253,9 @@ export default function ProfileScreen() {
         <View style={styles.headerSpacer} />
         <Pressable
           style={styles.settingsBtn}
-          onPress={handleSignOut}
-          disabled={signingOut}
+          onPress={() => router.push("/settings" as any)}
         >
-          {signingOut ? (
-            <ActivityIndicator
-              size="small"
-              color={theme.colors.textSecondary}
-            />
-          ) : (
-            <Text style={styles.settingsIcon}>⚙️</Text>
-          )}
+          <Text style={styles.settingsIcon}>⚙️</Text>
         </Pressable>
       </View>
 
@@ -497,35 +417,12 @@ export default function ProfileScreen() {
         onEndReached={handleEndReached}
         onEndReachedThreshold={0.5}
         ListFooterComponent={
-          <View>
-            {loadingMore ? (
-              <ActivityIndicator
-                color={theme.colors.accent}
-                style={styles.footerSpinner}
-              />
-            ) : null}
-            <Pressable
-              style={styles.deleteAccountBtn}
-              onPress={handleDeleteAccount}
-              disabled={deletingAccount}
-            >
-              {deletingAccount ? (
-                <ActivityIndicator size="small" color={theme.colors.error} />
-              ) : (
-                <Text style={styles.deleteAccountText}>계정 삭제</Text>
-              )}
-            </Pressable>
-
-            <View style={styles.legalRow}>
-              <Pressable onPress={() => Linking.openURL(LEGAL_URLS.terms)}>
-                <Text style={styles.legalLinkText}>이용약관</Text>
-              </Pressable>
-              <Text style={styles.legalDivider}>·</Text>
-              <Pressable onPress={() => Linking.openURL(LEGAL_URLS.privacy)}>
-                <Text style={styles.legalLinkText}>개인정보처리방침</Text>
-              </Pressable>
-            </View>
-          </View>
+          loadingMore ? (
+            <ActivityIndicator
+              color={theme.colors.accent}
+              style={styles.footerSpinner}
+            />
+          ) : null
         }
       />
     </SafeAreaView>
@@ -720,33 +617,6 @@ const styles = StyleSheet.create({
   },
   footerSpinner: {
     paddingVertical: 20,
-  },
-  deleteAccountBtn: {
-    alignSelf: "center",
-    marginTop: 40,
-    marginBottom: 24,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-  },
-  deleteAccountText: {
-    fontSize: 13,
-    color: theme.colors.error,
-    textDecorationLine: "underline",
-  },
-  legalRow: {
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 32,
-  },
-  legalLinkText: {
-    fontSize: 12,
-    color: theme.colors.textSecondary,
-  },
-  legalDivider: {
-    fontSize: 12,
-    color: theme.colors.border,
   },
 
   // 사진 그리드

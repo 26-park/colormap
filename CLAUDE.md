@@ -76,6 +76,7 @@
     - 6단계: **계정 삭제 기능 완료**(2026-07-13) — Supabase 공식 패턴대로 `supabase/functions/delete-account`(Edge Function, service_role)에서 `auth.admin.deleteUser()` 한 번으로 처리, DB 쪽은 전부 FK cascade(profiles→posts→post_media/comments/post_likes, country_visits, friendships)와 G-1 트리거로 자동 정리됨(앱이 개별 테이블을 지우지 않음). Storage(`post-media` 버킷)는 FK 관계가 없어 별도로 `posts/{userId}` prefix `list()`+`remove()`(2단계 재귀, best-effort). 본인 확인은 요청 헤더의 JWT로 `auth.getUser()`를 거쳐 얻은 userId만 사용(body로 안 받음 — 남 계정 삭제 방지). 앱 쪽은 프로필 탭 그리드 최하단(`ListFooterComponent`)에 "계정 삭제" 텍스트 링크 + 2단계 `Alert` 확인(destructive) → `supabase.functions.invoke('delete-account')` → 성공 시 기존 `signOut()` 재사용(로컬 세션+Google 캐시 정리). mini 계정으로 전체 흐름(삭제→signOut→재로그인 시 신규 온보딩) 실기기 검증 완료.
     - 7단계: **개인정보처리방침/이용약관 완료**(2026-07-14, 커밋 `c254223`) — `docs/legal/privacy.html`·`terms.html` 작성(본문은 사용자가 직접 제공, 번호 항목은 `<h2>`/`<h3>`, 목록은 `<ul>`/`<ol>`로 구조화) 후 GitHub Pages(저장소 `26-park/colormap`, `main` 브랜치 `/docs` 폴더)로 호스팅. 최종 URL `https://26-park.github.io/colormap/legal/privacy.html`(terms도 동일 패턴) — `constants/legal.ts`의 `LEGAL_URLS`에 한 곳에서만 정의, sign-up.tsx 약관 동의 안내와 profile.tsx 계정 삭제 근처에 `Linking.openURL`로 연결.
     - 8단계: **앱 아이콘/스플래시 교체 완료**(2026-07-17) — 주황 트레일 심볼로 교체. `android-icon-background.png`/`android-icon-monochrome.png` 이미지 파일 삭제하고 `app.json`의 `android.adaptiveIcon.backgroundColor`를 `#ff6a2b`(브랜드 주황)로 대체(`foregroundImage`만 유지). 스플래시도 `backgroundColor: "#ff6a2b"`로 통일(기존 light `#ffffff`/dark `#000000` 분기 제거). 1024 원본은 스토어 등록용으로 별도 보관, 512는 재사용 예정. 에뮬레이터 재빌드로 아이콘·스플래시 노출 확인 완료.
+    - 9단계: **정식 설정 화면 완료**(2026-07-18) — `app/settings.tsx` 신설(스택 push, `app/post/[id].tsx`와 동일한 뒤로가기+타이틀 헤더 패턴). 계정(로그아웃/계정 삭제)·약관(이용약관/개인정보처리방침)·앱 정보(버전, `expo-constants`의 `Constants.expoConfig?.version`) 3섹션 카드 UI로 통합. 로그아웃·계정 삭제 로직(확인 문구, 2단계 확인, `delete-account` Edge Function 호출, `signOut()`)은 새로 짜지 않고 `profile.tsx`에서 그대로 이동. `profile.tsx`의 ⚙️ 버튼은 `router.push('/settings')`로 변경(기존 로그아웃 다이얼로그 제거), 그리드 하단에 흩어져 있던 계정 삭제 링크·약관 링크도 제거해 중복 없앰. 에뮬레이터에서 진입/로그아웃/약관 링크/계정 삭제 다이얼로그 전부 검증 완료.
   - Phase H: **나라 이름 한글화 완료**(2026-07-17) — `lib/countryNamesKo.ts` 신설, GeoJSON 고유 `cc` 237개 전부 정적 매핑(`Record<string, string>` + `getCountryNameKo(cc, fallback?)`). `Intl.DisplayNames`는 조사 결과 기각 — Hermes(특히 Android)에서 크래시 리포트가 실재하고(`facebook/hermes#1144`) Meta 내부적으로 Intl 투자가 끊긴 상태라 신뢰 불가로 판단, 정적 매핑으로 확정(GeoJSON 원본은 CLAUDE.md 수정 금지 원칙 유지, 별도 파일로 관리). 검증 스크립트로 GeoJSON cc와 매핑 키 완전 일치(누락/초과 0) + 중복 한글명 0건 확인. 표시부 5곳(나라상세 타이틀, compose 헤더, 게시물상세 헤더/위치, 프로필 나라 칩) 교체 — 프로필 칩은 원래 `cc` 코드가 그대로 노출되던 버그도 같이 발견해 수정, `localeCompare('ko')` 정렬 추가.
   - Phase I: **나라상세 "내 기록/모두" 탭 완료**(2026-07-17) — 나라상세 기본 화면이 "모두의 공개 게시물"이 아니라 "내가 이 나라에 남긴 기록"이어야 한다는 제품 의도에 맞춰 탭 분리(기본 `내 기록`, 두 번째 `모두`=기존 동작). 탭 전환 시 재조회는 `useFocusEffect`의 콜백 identity가 바뀌면 focus 상태에서도 즉시 재실행되는 특성(`@react-navigation/core`)을 이용해 `activeTab`을 의존성에 추가하는 것만으로 처리, race 방지는 프로필 D-2의 `requestIdRef` 패턴 재사용. **G-2 버그 수정**: 기존 `canColor`가 필터 없는 `posts.length`(=모두의 게시물)를 기준으로 삼고 있어서 "남이 이 나라에 공개 게시물을 올리면 내가 게시물이 없어도 색 팔레트가 열리는" 조용한 버그가 있었음(실제 DB 갱신은 `country_visits` UPDATE 조건의 `user_id` 필터로 막혔지만 UX상 팔레트가 열렸다 색 선택이 반영 안 되는 문제) — 탭 상태와 무관하게 항상 "내 게시물 수"만 세는 전용 count 쿼리(`myPostCount`, `head: true`)로 교체해 고정.
 - **정리 예정 (우선순위 낮음)**: `expo-modules-core`가 `package.json`에 직접 의존성으로 들어가 있음(compose.tsx의 `uuid` 사용) — `expo-doctor` 경고 대상(빌드는 막지 않음). 나중에 `expo` 패키지가 재노출하는 API로 교체할 것.
@@ -89,11 +90,11 @@
     - ✅ 시드 테스트 데이터 정리 — 완료. DB 실사 결과 스크립트(`scripts/seed-test-data.sql`) 자체는 실행된 적 없음(gp123 계정 posts 5건은 실제 앱으로 만든 수동 테스트 게시물, 남기기로 결정) — 대신 발견된 country_visits 고아 행 DZ(과거 RLS 갭 시기 잔재, 트리거는 정상 확인됨) 1건만 삭제 완료(2026-07-13, SQL 직접 실행·마이그레이션 아님).
     - ✅ 계정 삭제 기능 — 완료 (위 G-3 6단계 참고)
     - ✅ 개인정보처리방침 / 이용약관 — 완료 (위 G-3 7단계 참고, GitHub Pages 호스팅 + 앱 링크 연결)
-  - **[P1 빠름]**
+  - **[P1 빠름] — ✅ 전부 완료 (2026-07-18)**
     - ✅ 앱 아이콘/스플래시 이미지 교체 — 완료 (위 G-3 8단계 참고, 주황 트레일 심볼)
-    - 정식 설정 화면 신설(현재 ⚙️는 로그아웃 확인만 함 — 4단계 TODO)
+    - ✅ 나라 이름 한글화 — 완료 (위 Phase H 참고)
+    - ✅ 정식 설정 화면 신설 — 완료 (위 G-3 9단계 참고)
   - **[P2 조정]**
-    - 나라 이름 한글화(현재 GeoJSON `properties.nm`이 영문)
     - Pretendard 폰트 적용(디자인 토큰에 확정돼 있으나 아직 미적용)
     - 에러 바운더리 추가
     - 에러 상태 / 빈 상태(empty state) UI 구분
