@@ -37,16 +37,24 @@ export default function CountryDetailScreen() {
   const { session } = useAuth();
   const [color, setColor] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<'mine' | 'all'>('mine');
   const [posts, setPosts] = useState<GridPost[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(true);
   // G-2: 색칠 생성은 posts INSERT 트리거(G-1)만 한다 — 앱은 이미 있는 색칠의
   // 색만 바꾼다. 게시물이 있을 때만(=country_visits 행이 보장될 때만) 팔레트를 연다.
+  // "내 기록/모두" 탭이 갈리면서 posts.length는 더 이상 "내 게시물 존재"를 뜻하지
+  // 않게 됐다(모두 탭에선 남의 공개 게시물도 포함) — 그래서 탭과 무관하게 항상
+  // 내 게시물 수만 세는 별도 count 쿼리(myPostCount)로 판단한다.
+  const [myPostCount, setMyPostCount] = useState<number | null>(null);
   const [lockHintVisible, setLockHintVisible] = useState(false);
   const lockHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const canColor = !loadingPosts && posts.length > 0;
+  const canColor = myPostCount !== null && myPostCount > 0;
   // 최초 1회만 로딩 스피너를 보여주고, 이후 포커스 재조회는 기존 그리드를 유지한
-  // 채 백그라운드로 갱신한다(깜빡임 방지).
+  // 채 백그라운드로 갱신한다(깜빡임 방지) — 탭 전환도 동일하게 취급.
   const loadedPostsOnceRef = useRef(false);
+  // 탭 전환/재포커스가 겹칠 때 늦게 도착한 이전 응답이 최신 응답을 덮어쓰지
+  // 않도록 하는 토큰(프로필 D-2와 동일 패턴).
+  const requestIdRef = useRef(0);
   // 그리드 컨테이너의 실제 렌더 폭 — Dimensions.get('window')는 엣지투엣지/시스템바
   // 처리 방식에 따라 실제 렌더 폭과 어긋날 수 있어 onLayout으로 직접 측정한다.
   const [gridWidth, setGridWidth] = useState(SCREEN_WIDTH);
@@ -76,30 +84,65 @@ export default function CountryDetailScreen() {
     }, [session?.user.id, cc]),
   );
 
-  // 이 나라(cc)의 게시물 그리드 — visibility 판정은 RLS(posts_select_visible)에 맡기고
-  // 여기선 country_code만 필터. post_media를 전부 가져와 order_index 오름차순 정렬 후
-  // 맨 앞을 대표사진으로 쓰고, 개수로 '여러장' 배지 여부를 판단한다.
-  // 대표사진 url은 시드의 외부 URL이거나 private 버킷 저장 경로일 수 있어, 후처리로
-  // resolveMediaUrls(signed URL 배치 발급, 1시간 만료)를 거친 뒤 화면에 반영한다.
-  //
-  // 포커스될 때마다 재조회(게시물 상세에서 삭제 후 돌아오면 그리드가 바로 갱신되게).
-  // 최초 로드만 스피너를 보여주고, 재조회는 기존 그리드를 유지한 채 교체한다.
+  // G-2 잠금 판정 전용 — 탭 상태와 무관하게 항상 "내 게시물 수"만 가볍게 센다
+  // (head: true, 페이로드 없음). "모두" 탭을 보고 있어도 팔레트 잠금은 정확해야 한다.
   useFocusEffect(
     useCallback(() => {
+      const userId = session?.user.id;
+      if (!userId || !cc) return;
+
+      supabase
+        .from('posts')
+        .select('id', { count: 'exact', head: true })
+        .eq('country_code', cc)
+        .eq('user_id', userId)
+        .then(({ count, error }) => {
+          if (error) {
+            console.error('내 게시물 수 조회 실패:', error);
+            return;
+          }
+          setMyPostCount(count ?? 0);
+        });
+    }, [session?.user.id, cc]),
+  );
+
+  // 이 나라(cc)의 게시물 그리드 — "내 기록" 탭이면 user_id도 필터, "모두" 탭이면
+  // 무필터(RLS의 posts_select_visible이 가시성 판정). post_media를 전부 가져와
+  // order_index 오름차순 정렬 후 맨 앞을 대표사진으로 쓰고, 개수로 '여러장' 배지
+  // 여부를 판단한다. 대표사진 url은 시드의 외부 URL이거나 private 버킷 저장
+  // 경로일 수 있어, 후처리로 resolveMediaUrls(signed URL 배치 발급, 1시간 만료)를
+  // 거친 뒤 화면에 반영한다.
+  //
+  // 포커스될 때마다, 그리고 activeTab이 바뀔 때마다 재조회한다 — useFocusEffect는
+  // 넘겨준 콜백의 identity(의존성 배열)가 바뀌면 화면이 이미 focus된 상태에서도
+  // 즉시 재실행되므로(node_modules/@react-navigation/core/src/useFocusEffect.tsx),
+  // activeTab을 의존성에 넣는 것만으로 "탭 전환 시 재조회"가 그대로 동작한다.
+  // 최초 로드만 스피너를 보여주고, 이후(재포커스든 탭 전환이든)는 기존 그리드를
+  // 유지한 채 교체한다(깜빡임 방지). requestIdRef로 늦게 도착한 응답은 버린다.
+  useFocusEffect(
+    useCallback(() => {
+      const userId = session?.user.id;
       if (!cc) return;
+      if (activeTab === 'mine' && !userId) return;
       if (!loadedPostsOnceRef.current) setLoadingPosts(true);
-      let cancelled = false;
+
+      requestIdRef.current += 1;
+      const requestId = requestIdRef.current;
 
       (async () => {
-        const { data, error } = await supabase
+        let query = supabase
           .from('posts')
           .select('id, post_media(url, order_index)')
           .eq('country_code', cc)
           .order('created_at', { ascending: false });
+        if (activeTab === 'mine') query = query.eq('user_id', userId);
 
+        const { data, error } = await query;
+
+        if (requestId !== requestIdRef.current) return;
         if (error) {
           console.error('posts 조회 실패:', error);
-          if (!cancelled) setLoadingPosts(false);
+          setLoadingPosts(false);
           return;
         }
 
@@ -113,7 +156,7 @@ export default function CountryDetailScreen() {
           .filter((url): url is string => url !== null);
         const resolved = await resolveMediaUrls(rawUrls);
 
-        if (cancelled) return;
+        if (requestId !== requestIdRef.current) return;
         setPosts(
           rows.map((row) => ({
             ...row,
@@ -123,11 +166,7 @@ export default function CountryDetailScreen() {
         setLoadingPosts(false);
         loadedPostsOnceRef.current = true;
       })();
-
-      return () => {
-        cancelled = true;
-      };
-    }, [cc]),
+    }, [cc, activeTab, session?.user.id]),
   );
 
   useEffect(() => {
@@ -204,6 +243,22 @@ export default function CountryDetailScreen() {
         )}
       </View>
 
+      {/* 내 기록 / 모두 탭 */}
+      <View style={styles.tabRow}>
+        <Pressable
+          style={[styles.tab, activeTab === 'mine' && styles.tabSelected]}
+          onPress={() => setActiveTab('mine')}
+        >
+          <Text style={[styles.tabText, activeTab === 'mine' && styles.tabTextSelected]}>내 기록</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.tab, activeTab === 'all' && styles.tabSelected]}
+          onPress={() => setActiveTab('all')}
+        >
+          <Text style={[styles.tabText, activeTab === 'all' && styles.tabTextSelected]}>모두</Text>
+        </Pressable>
+      </View>
+
       {/* 본문 — 게시물 사진 그리드 */}
       <View style={styles.body}>
         {loadingPosts ? (
@@ -212,7 +267,9 @@ export default function CountryDetailScreen() {
           </View>
         ) : posts.length === 0 ? (
           <View style={styles.centerBody}>
-            <Text style={styles.placeholderText}>아직 기록이 없어요</Text>
+            <Text style={styles.placeholderText}>
+              {activeTab === 'mine' ? '아직 이 나라에 남긴 기록이 없어요' : '아직 게시물이 없어요'}
+            </Text>
           </View>
         ) : (
           <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -363,6 +420,35 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 14,
     overflow: 'hidden',
+  },
+
+  // 내 기록 / 모두 탭 (프로필 나라 칩과 동일 스펙)
+  tabRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  tab: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+  },
+  tabSelected: {
+    backgroundColor: theme.colors.accent,
+    borderColor: theme.colors.accent,
+  },
+  tabText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: theme.colors.textSecondary,
+  },
+  tabTextSelected: {
+    color: '#fff',
   },
 
   body: {
