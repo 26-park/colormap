@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Stack, useRouter, useSegments, type ErrorBoundaryProps } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
+import { useFonts } from 'expo-font';
 import 'react-native-reanimated';
 
 import { AuthProvider, useAuth } from '@/context/auth';
@@ -65,11 +66,24 @@ function RootLayoutNav() {
   const { session, hasProfile, loading } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+  // Pretendard 정적 OTF 5종 — weight별 fontFamily로 등록(theme.ts의 fonts와
+  // 이름을 맞춤). 로드가 auth 확정과 같은 스플래시 게이트에 합류한다.
+  const [fontsLoaded, fontError] = useFonts({
+    'Pretendard-Regular': require('../assets/fonts/Pretendard-Regular.otf'),
+    'Pretendard-Medium': require('../assets/fonts/Pretendard-Medium.otf'),
+    'Pretendard-SemiBold': require('../assets/fonts/Pretendard-SemiBold.otf'),
+    'Pretendard-Bold': require('../assets/fonts/Pretendard-Bold.otf'),
+    'Pretendard-ExtraBold': require('../assets/fonts/Pretendard-ExtraBold.otf'),
+  });
 
   useEffect(() => {
-    if (loading) return;
+    // fontError가 있으면 fail-open — 폰트 로드 실패로 스플래시에 영영 갇히면
+    // 안 되니, 이 경우엔 fontsLoaded를 기다리지 않고 진행한다(AppText가
+    // 참조하는 fontFamily가 없으면 RN이 시스템 폰트로 조용히 폴백한다).
+    if (loading || (!fontsLoaded && !fontError)) return;
+    if (fontError) console.error('Pretendard 폰트 로드 실패:', fontError);
 
-    // auth 확정 → 스플래시 해제 후 올바른 화면으로 이동
+    // auth + 폰트(또는 폰트 실패 확정) 후 스플래시 해제 후 올바른 화면으로 이동
     SplashScreen.hideAsync();
 
     const seg0 = segments[0] as string | undefined;
@@ -83,7 +97,7 @@ function RootLayoutNav() {
     } else {
       if (inAuth || inOnboarding) router.replace('/(tabs)');
     }
-  }, [session, hasProfile, loading]);
+  }, [session, hasProfile, loading, fontsLoaded, fontError]);
 
   return (
     <>

@@ -15,21 +15,16 @@ export const theme = {
     button: 14,
     card: 16,
   },
-  // TODO: Pretendard 폰트 로드 후 여기에 fontFamily 추가
-} as const;
-
-// 기존 컴포넌트 호환용 — 추후 Pretendard 적용 시 교체
-import { Platform } from 'react-native';
-export const Fonts = Platform.select({
-  ios: { sans: 'system-ui', serif: 'ui-serif', rounded: 'ui-rounded', mono: 'ui-monospace' },
-  default: { sans: 'normal', serif: 'serif', rounded: 'normal', mono: 'monospace' },
-  web: {
-    sans: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-    serif: "Georgia, 'Times New Roman', serif",
-    rounded: "'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif",
-    mono: "SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+  // Pretendard 정적 OTF 5종(assets/fonts/) — weight별 fontFamily. 가변 폰트 대신
+  // 정적 파일을 쓰는 이유와 fontWeight를 같이 쓰면 안 되는 이유는 AppText.tsx 참고.
+  fonts: {
+    regular: 'Pretendard-Regular', // 400
+    medium: 'Pretendard-Medium', // 500
+    semibold: 'Pretendard-SemiBold', // 600
+    bold: 'Pretendard-Bold', // 700
+    extrabold: 'Pretendard-ExtraBold', // 800
   },
-});
+} as const;
 
 // react-navigation 컬러 스킴 호환 (탭바 등에서 사용)
 export const Colors = {
