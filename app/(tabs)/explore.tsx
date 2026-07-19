@@ -1,5 +1,6 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Text } from '@/components/AppText';
 import { theme } from '@/constants/theme';
 
 export default function ExploreScreen() {
@@ -30,7 +31,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 22,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: theme.colors.text,
   },
   subtitle: {

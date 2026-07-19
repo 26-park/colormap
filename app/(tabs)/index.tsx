@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, type NativeSyntheticEvent } from 'react-native';
+import { StyleSheet, View, TouchableOpacity, type NativeSyntheticEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
@@ -10,6 +10,7 @@ import {
   Layer,
   type PressEventWithFeatures,
 } from '@maplibre/maplibre-react-native';
+import { Text } from '@/components/AppText';
 import { theme } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/auth';
@@ -179,7 +180,7 @@ const styles = StyleSheet.create({
   },
   logo: {
     fontSize: 20,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: theme.colors.accent,
     letterSpacing: -0.3,
   },
@@ -194,7 +195,7 @@ const styles = StyleSheet.create({
   },
   colorErrorBannerText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontFamily: theme.fonts.semibold,
     color: theme.colors.error,
   },
 
@@ -220,12 +221,12 @@ const styles = StyleSheet.create({
   },
   toggleText: {
     fontSize: 13,
-    fontWeight: '500',
+    fontFamily: theme.fonts.medium,
     color: theme.colors.textSecondary,
   },
   toggleTextActive: {
     color: theme.colors.text,
-    fontWeight: '600',
+    fontFamily: theme.fonts.semibold,
   },
 
   // 아바타
@@ -259,7 +260,7 @@ const styles = StyleSheet.create({
   zoomBtnText: {
     fontSize: 22,
     color: theme.colors.text,
-    fontWeight: '400',
+    fontFamily: theme.fonts.regular,
     lineHeight: 26,
   },
   zoomDivider: {

@@ -5,13 +5,13 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   TextInput,
   View,
 } from 'react-native';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Text } from '@/components/AppText';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/auth';
 import { theme } from '@/constants/theme';
@@ -222,13 +222,13 @@ const styles = StyleSheet.create({
   },
   logoText: {
     fontSize: 26,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: theme.colors.accent,
     letterSpacing: -0.5,
   },
   title: {
     fontSize: 22,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: theme.colors.text,
     textAlign: 'center',
   },
@@ -259,7 +259,7 @@ const styles = StyleSheet.create({
   },
   atSign: {
     fontSize: 17,
-    fontWeight: '500',
+    fontFamily: theme.fonts.medium,
     color: theme.colors.textSecondary,
     marginRight: 2,
   },
@@ -306,7 +306,7 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     fontSize: 16,
-    fontWeight: '600',
+    fontFamily: theme.fonts.semibold,
     color: '#fff',
   },
 });

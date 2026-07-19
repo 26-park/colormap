@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { Stack, useRouter, useSegments, type ErrorBoundaryProps } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
@@ -7,6 +7,7 @@ import { useFonts } from 'expo-font';
 import 'react-native-reanimated';
 
 import { AuthProvider, useAuth } from '@/context/auth';
+import { Text } from '@/components/AppText';
 import { theme } from '@/constants/theme';
 
 // 루트 레벨 렌더 에러 바운더리 — expo-router가 이 파일의 default export(RootLayout,
@@ -37,7 +38,7 @@ const errorStyles = StyleSheet.create({
   },
   title: {
     fontSize: 18,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: theme.colors.text,
   },
   subtitle: {
@@ -54,7 +55,7 @@ const errorStyles = StyleSheet.create({
   },
   retryText: {
     fontSize: 15,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: '#fff',
   },
 });

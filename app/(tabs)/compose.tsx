@@ -5,7 +5,6 @@ import {
   Image,
   ScrollView,
   StyleSheet,
-  Text,
   TextInput,
   TouchableOpacity,
   View,
@@ -19,6 +18,7 @@ import { decode } from 'base64-arraybuffer';
 import { uuid } from 'expo-modules-core';
 import * as Location from 'expo-location';
 import { Map, Camera, Marker, GeoJSONSource, Layer, type PressEvent } from '@maplibre/maplibre-react-native';
+import { Text } from '@/components/AppText';
 import { theme } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/auth';
@@ -393,7 +393,7 @@ const styles = StyleSheet.create({
   },
   cancelText: {
     fontSize: 15,
-    fontWeight: '500',
+    fontFamily: theme.fonts.medium,
     color: theme.colors.textSecondary,
   },
   headerCenter: {
@@ -402,7 +402,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 16,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: theme.colors.text,
   },
   headerSubtitleRow: {
@@ -441,7 +441,7 @@ const styles = StyleSheet.create({
   postBtnText: {
     color: '#fff',
     fontSize: 14,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
   },
 
   container: {
@@ -457,7 +457,7 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 15,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: theme.colors.text,
   },
   sectionHint: {
@@ -503,7 +503,7 @@ const styles = StyleSheet.create({
   },
   gpsChipText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontFamily: theme.fonts.semibold,
     color: theme.colors.accent,
   },
 
@@ -529,7 +529,7 @@ const styles = StyleSheet.create({
   // 사진 스트립
   photoCount: {
     fontSize: 13,
-    fontWeight: '600',
+    fontFamily: theme.fonts.semibold,
     color: theme.colors.textSecondary,
   },
   photoCountNumber: {
@@ -552,7 +552,7 @@ const styles = StyleSheet.create({
   addPhotoPlus: {
     fontSize: 22,
     color: theme.colors.accent,
-    fontWeight: '400',
+    fontFamily: theme.fonts.regular,
     lineHeight: 24,
   },
   addPhotoLabel: {
@@ -583,7 +583,7 @@ const styles = StyleSheet.create({
   },
   coverBadgeText: {
     fontSize: 10,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: '#fff',
   },
   photoOverlay: {
@@ -594,7 +594,7 @@ const styles = StyleSheet.create({
   },
   photoErrorText: {
     fontSize: 11,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: '#fff',
   },
   removeBtn: {
@@ -611,7 +611,7 @@ const styles = StyleSheet.create({
   removeBtnText: {
     fontSize: 11,
     color: '#fff',
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
   },
 
   // 공개 범위
@@ -633,7 +633,7 @@ const styles = StyleSheet.create({
   },
   visibilityBtnText: {
     fontSize: 13,
-    fontWeight: '600',
+    fontFamily: theme.fonts.semibold,
     color: theme.colors.textSecondary,
   },
   visibilityBtnTextActive: {

@@ -1,3 +1,4 @@
+import { Text } from "@/components/AppText";
 import { ErrorView } from "@/components/ErrorView";
 import { theme } from "@/constants/theme";
 import { useAuth } from "@/context/auth";
@@ -14,7 +15,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -555,7 +555,7 @@ const styles = StyleSheet.create({
   username: {
     marginTop: 14,
     fontSize: 18,
-    fontWeight: "700",
+    fontFamily: theme.fonts.bold,
     color: theme.colors.text,
   },
   bio: {
@@ -585,7 +585,7 @@ const styles = StyleSheet.create({
   },
   statNumber: {
     fontSize: 28,
-    fontWeight: "800",
+    fontFamily: theme.fonts.extrabold,
     color: theme.colors.accent,
     lineHeight: 34,
   },
@@ -622,7 +622,7 @@ const styles = StyleSheet.create({
   },
   chipText: {
     fontSize: 13,
-    fontWeight: "600",
+    fontFamily: theme.fonts.semibold,
     color: theme.colors.textSecondary,
   },
   chipTextSelected: {
@@ -638,7 +638,7 @@ const styles = StyleSheet.create({
   },
   sortText: {
     fontSize: 13,
-    fontWeight: "600",
+    fontFamily: theme.fonts.semibold,
     color: theme.colors.textSecondary,
   },
 
@@ -652,7 +652,7 @@ const styles = StyleSheet.create({
   },
   gridTitle: {
     fontSize: 16,
-    fontWeight: "700",
+    fontFamily: theme.fonts.bold,
     color: theme.colors.text,
   },
   gridCount: {

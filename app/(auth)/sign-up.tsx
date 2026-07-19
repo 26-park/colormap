@@ -6,13 +6,13 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   TextInput,
   View,
 } from 'react-native';
 import { Link, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Text } from '@/components/AppText';
 import { useAuth } from '@/context/auth';
 import { useGoogleSignIn } from '@/hooks/use-google-sign-in';
 import { theme } from '@/constants/theme';
@@ -213,14 +213,14 @@ const styles = StyleSheet.create({
   },
   logoText: {
     fontSize: 28,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: theme.colors.accent,
     letterSpacing: -0.5,
     marginBottom: 8,
   },
   title: {
     fontSize: 22,
-    fontWeight: '600',
+    fontFamily: theme.fonts.semibold,
     color: theme.colors.text,
   },
   form: {
@@ -255,7 +255,7 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     fontSize: 16,
-    fontWeight: '600',
+    fontFamily: theme.fonts.semibold,
     color: '#fff',
   },
   divider: {
@@ -284,7 +284,7 @@ const styles = StyleSheet.create({
   },
   googleButtonText: {
     fontSize: 16,
-    fontWeight: '600',
+    fontFamily: theme.fonts.semibold,
     color: theme.colors.text,
   },
   footer: {
@@ -298,7 +298,7 @@ const styles = StyleSheet.create({
   },
   footerLink: {
     fontSize: 14,
-    fontWeight: '600',
+    fontFamily: theme.fonts.semibold,
     color: theme.colors.accent,
   },
   legalText: {
@@ -326,7 +326,7 @@ const styles = StyleSheet.create({
   },
   verifyTitle: {
     fontSize: 22,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: theme.colors.text,
     textAlign: 'center',
   },

@@ -8,7 +8,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   View,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -16,6 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Map, Camera, Marker, GeoJSONSource, Layer } from '@maplibre/maplibre-react-native';
+import { Text } from '@/components/AppText';
 import { theme } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import { resolveMediaUrls } from '@/lib/media';
@@ -387,7 +387,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     flex: 1,
     fontSize: 17,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: theme.colors.text,
     textAlign: 'center',
     marginHorizontal: 8,
@@ -450,7 +450,7 @@ const styles = StyleSheet.create({
   },
   locationTitle: {
     fontSize: 16,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: theme.colors.text,
   },
   locationSubtitle: {
@@ -499,7 +499,7 @@ const styles = StyleSheet.create({
   },
   visibilityBadgeText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontFamily: theme.fonts.semibold,
     color: theme.colors.textSecondary,
   },
   visibilityBadgeTextPublic: {
@@ -533,7 +533,7 @@ const styles = StyleSheet.create({
   },
   menuItemTextDanger: {
     fontSize: 16,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: '#ef4444',
   },
 

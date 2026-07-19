@@ -1,4 +1,5 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { Text } from '@/components/AppText';
 import { theme } from '@/constants/theme';
 
 type ErrorViewProps = {
@@ -49,7 +50,7 @@ const styles = StyleSheet.create({
   },
   retryText: {
     fontSize: 14,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: '#fff',
   },
   compactRow: {
@@ -62,7 +63,7 @@ const styles = StyleSheet.create({
   },
   compactRetry: {
     color: theme.colors.accent,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     textDecorationLine: 'underline',
   },
 });

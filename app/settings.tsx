@@ -8,10 +8,10 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Text } from '@/components/AppText';
 import { theme } from '@/constants/theme';
 import { LEGAL_URLS } from '@/constants/legal';
 import { useAuth } from '@/context/auth';
@@ -171,7 +171,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     flex: 1,
     fontSize: 17,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: theme.colors.text,
     textAlign: 'center',
     marginHorizontal: 8,
@@ -186,7 +186,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     marginHorizontal: 20,
     fontSize: 13,
-    fontWeight: '600',
+    fontFamily: theme.fonts.semibold,
     color: theme.colors.textSecondary,
   },
   card: {

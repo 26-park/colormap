@@ -7,12 +7,12 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Text } from '@/components/AppText';
 import { theme } from '@/constants/theme';
 import { COLOR_PALETTE } from '@/constants/palette';
 import { supabase } from '@/lib/supabase';
@@ -407,7 +407,7 @@ const styles = StyleSheet.create({
   title: {
     flexShrink: 1,
     fontSize: 17,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: theme.colors.text,
     textAlign: 'center',
   },
@@ -437,7 +437,7 @@ const styles = StyleSheet.create({
   },
   lockHintText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontFamily: theme.fonts.semibold,
     color: '#fff',
     backgroundColor: 'rgba(0,0,0,0.75)',
     paddingHorizontal: 12,
@@ -468,7 +468,7 @@ const styles = StyleSheet.create({
   },
   tabText: {
     fontSize: 13,
-    fontWeight: '600',
+    fontFamily: theme.fonts.semibold,
     color: theme.colors.textSecondary,
   },
   tabTextSelected: {
@@ -494,7 +494,7 @@ const styles = StyleSheet.create({
   },
   countLabel: {
     fontSize: 14,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: theme.colors.text,
     paddingHorizontal: 16,
     marginBottom: 10,
@@ -564,13 +564,13 @@ const styles = StyleSheet.create({
   },
   addFabPlus: {
     fontSize: 18,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: '#fff',
     lineHeight: 20,
   },
   addFabText: {
     fontSize: 14,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: '#fff',
   },
 
@@ -593,7 +593,7 @@ const styles = StyleSheet.create({
   },
   sheetTitle: {
     fontSize: 15,
-    fontWeight: '700',
+    fontFamily: theme.fonts.bold,
     color: theme.colors.text,
     textAlign: 'center',
     marginBottom: 18,

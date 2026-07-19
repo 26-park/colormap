@@ -85,6 +85,10 @@
     - **실버그 2건 동시 수정**: ① 프로필 무한스크롤 2페이지+ 실패 시 기존엔 `hasMore`가 그대로 true로 남아 스크롤할 때마다 같은 실패 요청이 무한 반복됐음 — 에러 분기에서 `hasMore=false`로 내려 `onEndReached` 가드가 막게 하고, 재시도는 푸터의 compact ErrorView(`retryLoadMore`)로만 허용. ② 온보딩 username 중복확인(`(onboarding)/username.tsx`)이 실패 시 error 체크 자체가 없어 `data`가 `undefined`가 되면서 `'available'`로 잘못 판정되던 조용한 버그 발견 — fail-closed 원칙으로 수정: 실패 시 `'error'` 상태로 떨어뜨려 "확인하지 못했어요·다시 시도"를 보여주고(canSubmit이 'available'일 때만 통과하는 기존 조건이 자동으로 제출을 막음) 탭하면 `runCheck` 재실행.
     - **네트워크 실패 처리 검증**: postgrest-js 소스(`PostgrestBuilder.ts`)로 fetch 자체가 실패(비행기 모드 등)해도 `shouldThrowOnError`를 켠 적 없는 이상 예외로 throw되지 않고 `{ data: null, error }`로 정상 반환됨을 확인 — 그래서 위 error state 분기들이 서버 에러뿐 아니라 오프라인 상황에서도 동일하게 동작한다.
     - 검증: 온보딩 fail-closed(비행기 모드 → "확인하지 못했어요"+제출 비활성 → 복구 후 정상 진행) 에뮬레이터 실기기 확인 완료, 화면별 ErrorView/배너도 에뮬레이터로 확인 완료. 프로필 무한 재시도 수정은 `hasMore` 가드가 재호출을 코드 레벨에서 원천 차단함을 사전 검증(에뮬 시나리오 실행 대신 코드 검증으로 갈음).
+  - Phase K: **Pretendard 폰트 적용 완료**(2026-07-18) — `constants/theme.ts`의 오랜 TODO(`// TODO: Pretendard 폰트 로드 후 여기에 fontFamily 추가`) 청산. 인프라(1단계)와 화면 교체(2단계)로 나눠 진행.
+    - **1단계 — 인프라**: npm `pretendard@1.3.9`(라이선스 `OFL-1.1`, 상업적 사용·재배포 허용 확인) 배포 경로에서 정적 OTF 5종(Regular/Medium/SemiBold/Bold/ExtraBold, `assets/fonts/`)을 jsDelivr 고정 버전 URL로 받음 — 실사용 weight는 grep으로 400/500/600/700(다수)/800(프로필 통계 숫자 1곳) 확인 후 이 5개만 선정. **가변 폰트(PretendardVariable) 대신 정적 파일**을 쓰기로 확정 — Expo 공식 문서가 "variable fonts do not have support across all platforms, use static fonts for full platform support"라고 명시하고, RN 자체에도 커스텀 `fontFamily`+`fontWeight`를 같이 쓰면 안드로이드/iOS 둘 다 가짜 볼드나 시스템 폰트 폴백이 나는 알려진 문제가 있어 weight별 정적 파일+개별 fontFamily가 유일하게 안정적. 한글 서브셋 폰트도 배제 — `caption`/`place_label`처럼 사용자가 자유 입력하는 한글이 많아 서브셋 미포함 음절에서 글자가 깨질 위험. `components/AppText.tsx` 신설(`react-native`의 `Text`를 감싸 기본 `fontFamily: theme.fonts.regular` 부여, export 이름을 `Text`로 맞춰 다른 파일은 import만 `'react-native'` → `'@/components/AppText'`로 바꾸면 JSX는 안 건드려도 됨) — 화면 텍스트가 거의 다 한글이라 시스템 폰트와 자형 차이가 크게 보이는 게 이 방식을 택한 이유, `fontWeight` 있는 곳은 AppText 여부와 무관하게 각자 `fontFamily`로 덮어써야 하는 제약은 그대로 남음. `app/_layout.tsx`에 `useFonts` 추가해 기존 auth-loading 스플래시 게이트에 합류 — **fail-open 필수**: `[fontsLoaded, fontError]`를 둘 다 받아 `if (loading || (!fontsLoaded && !fontError)) return;`로, 폰트 로드 실패 시에도 스플래시에 영영 갇히지 않고 시스템 폰트로 진행(1차 구현 때 `fontError`를 안 받아 이 케이스를 놓쳤던 걸 리뷰로 발견해 수정). 안 쓰던 `theme.ts`의 `Fonts` export(템플릿 잔재, 프로젝트 어디서도 import 안 됨 — grep 확인)는 삭제.
+    - **2단계 — 화면 교체**: 13개 파일 60곳 전부 `fontWeight: 'XXX'` → `fontFamily: theme.fonts.{regular|medium|semibold|bold|extrabold}`로 치환(fontWeight 키 완전 제거) + `import { Text } from 'react-native'` → `'@/components/AppText'`로 교체, 파일 단위로 나눠 진행하며 매 파일 후 tsc 체크. 루트 `ErrorBoundary`(`app/_layout.tsx`) 폴백도 처음엔 "위험 최소화" 명목으로 예외 취급하려 했으나, `AppText`가 `theme`(순수 객체) 하나만 의존하는 트리비얼한 컴포넌트라 예외로 둘 근거가 없어 그냥 통일 — **의도적 예외 0개**. 완료 후 `grep -rn "fontWeight" --include="*.tsx"`로 프로젝트 전체 검증, 남은 매치는 `AppText.tsx` 안의 "fontWeight 쓰지 말 것" 설명 주석 1건뿐(코드 아님) — 잔존 0곳 확인. `tsc` 전 구간 클린(기존 Deno 무관 에러 7개 제외), 에뮬레이터로 전 화면(로그인/지도/나라상세/프로필/작성/게시물상세/설정/온보딩) Pretendard 적용 + 레이아웃 안 깨짐 확인 완료.
+    - **원칙(향후 화면에도 적용)**: 새 화면은 `'react-native'`가 아니라 `'@/components/AppText'`에서 `Text`를 import할 것. `fontWeight` 스타일 키는 이 프로젝트에서 금지 — 굵기는 항상 `fontFamily: theme.fonts.*`로 지정.
 - **정리 예정 (우선순위 낮음)**: `expo-modules-core`가 `package.json`에 직접 의존성으로 들어가 있음(compose.tsx의 `uuid` 사용) — `expo-doctor` 경고 대상(빌드는 막지 않음). 나중에 `expo` 패키지가 재노출하는 API로 교체할 것.
 - **출시 후 TODO**: Expo SDK 54 → 56 업그레이드(현재는 Expo Go 호환 위해 54 유지 중이었지만, 이제 네이티브 모듈들 때문에 이미 Expo Go 자체가 불가능해졌으므로 그 이유는 사실상 소멸 — 그래도 출시 안정성 위해 업그레이드는 출시 이후로 미룸).
 - **⭐ 소셜 로그인 정책 확정 (v1 범위, 못박기 — 2026-07-13)**: v1은 **이메일 + 구글 로그인만**. 카카오·네이버·애플은 v1에 넣지 않는다.
@@ -101,11 +105,11 @@
     - ✅ 나라 이름 한글화 — 완료 (위 Phase H 참고)
     - ✅ 정식 설정 화면 신설 — 완료 (위 G-3 9단계 참고)
   - **[P2 조정]**
-    - Pretendard 폰트 적용(디자인 토큰에 확정돼 있으나 아직 미적용) ← 다음 순서
+    - ✅ Pretendard 폰트 적용 — 완료 (위 Phase K 참고)
     - ✅ 에러 바운더리 추가 — 완료 (위 Phase J 참고)
     - ✅ 에러 상태 / 빈 상태(empty state) UI 구분 — 완료 (위 Phase J 참고)
-    - 게시물 공개범위 사후 변경(현재 작성 시점에만 지정 가능)
-    - 계정 공개범위(public/private) 토글 UI (PRD 9장엔 컬럼 있으나 설정 화면 없음)
+    - 게시물 공개범위 사후 변경(현재 작성 시점에만 지정 가능) ← 다음 순서
+    - 계정 공개범위(public/private) 토글 UI (PRD 9장엔 컬럼 있으나 설정 화면 없음) ← 다음 순서
   - **[출시]**
     - 구글 플레이 콘솔 개발자 등록($25) + AAB 빌드(EAS, preview는 APK라 별도 프로필 필요) + 스토어 등록 자료(스크린샷, 설명, 개인정보처리방침 URL 연결 등) 준비
 
