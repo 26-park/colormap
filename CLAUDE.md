@@ -79,6 +79,12 @@
     - 9단계: **정식 설정 화면 완료**(2026-07-18) — `app/settings.tsx` 신설(스택 push, `app/post/[id].tsx`와 동일한 뒤로가기+타이틀 헤더 패턴). 계정(로그아웃/계정 삭제)·약관(이용약관/개인정보처리방침)·앱 정보(버전, `expo-constants`의 `Constants.expoConfig?.version`) 3섹션 카드 UI로 통합. 로그아웃·계정 삭제 로직(확인 문구, 2단계 확인, `delete-account` Edge Function 호출, `signOut()`)은 새로 짜지 않고 `profile.tsx`에서 그대로 이동. `profile.tsx`의 ⚙️ 버튼은 `router.push('/settings')`로 변경(기존 로그아웃 다이얼로그 제거), 그리드 하단에 흩어져 있던 계정 삭제 링크·약관 링크도 제거해 중복 없앰. 에뮬레이터에서 진입/로그아웃/약관 링크/계정 삭제 다이얼로그 전부 검증 완료.
   - Phase H: **나라 이름 한글화 완료**(2026-07-17) — `lib/countryNamesKo.ts` 신설, GeoJSON 고유 `cc` 237개 전부 정적 매핑(`Record<string, string>` + `getCountryNameKo(cc, fallback?)`). `Intl.DisplayNames`는 조사 결과 기각 — Hermes(특히 Android)에서 크래시 리포트가 실재하고(`facebook/hermes#1144`) Meta 내부적으로 Intl 투자가 끊긴 상태라 신뢰 불가로 판단, 정적 매핑으로 확정(GeoJSON 원본은 CLAUDE.md 수정 금지 원칙 유지, 별도 파일로 관리). 검증 스크립트로 GeoJSON cc와 매핑 키 완전 일치(누락/초과 0) + 중복 한글명 0건 확인. 표시부 5곳(나라상세 타이틀, compose 헤더, 게시물상세 헤더/위치, 프로필 나라 칩) 교체 — 프로필 칩은 원래 `cc` 코드가 그대로 노출되던 버그도 같이 발견해 수정, `localeCompare('ko')` 정렬 추가.
   - Phase I: **나라상세 "내 기록/모두" 탭 완료**(2026-07-17) — 나라상세 기본 화면이 "모두의 공개 게시물"이 아니라 "내가 이 나라에 남긴 기록"이어야 한다는 제품 의도에 맞춰 탭 분리(기본 `내 기록`, 두 번째 `모두`=기존 동작). 탭 전환 시 재조회는 `useFocusEffect`의 콜백 identity가 바뀌면 focus 상태에서도 즉시 재실행되는 특성(`@react-navigation/core`)을 이용해 `activeTab`을 의존성에 추가하는 것만으로 처리, race 방지는 프로필 D-2의 `requestIdRef` 패턴 재사용. **G-2 버그 수정**: 기존 `canColor`가 필터 없는 `posts.length`(=모두의 게시물)를 기준으로 삼고 있어서 "남이 이 나라에 공개 게시물을 올리면 내가 게시물이 없어도 색 팔레트가 열리는" 조용한 버그가 있었음(실제 DB 갱신은 `country_visits` UPDATE 조건의 `user_id` 필터로 막혔지만 UX상 팔레트가 열렸다 색 선택이 반영 안 되는 문제) — 탭 상태와 무관하게 항상 "내 게시물 수"만 세는 전용 count 쿼리(`myPostCount`, `head: true`)로 교체해 고정.
+  - Phase J: **에러 바운더리 + 에러/빈상태 구분 완료**(2026-07-18) — 렌더 크래시 방지(A)와 조용한 fetch 실패 제거(B) 두 트랙.
+    - **A. 루트 에러 바운더리**: `app/_layout.tsx`에 `ErrorBoundary` named export 하나만 추가(라우트별 아님). expo-router의 `Try` 컴포넌트가 이 파일의 default export(AuthProvider 포함 전체 트리)를 감싼다 — 소스(`node_modules/expo-router/build/views/Try.js`) 확인 결과 에러 유무에 따라 반환 엘리먼트 타입 자체가 바뀌므로(children ↔ ErrorBoundary) React가 매번 진짜 언마운트/리마운트를 수행, `retry()`가 실제 리셋으로 동작함을 검증. 렌더 단계 동기 에러만 잡고(비동기 fetch 에러는 못 잡음) fallback UI는 흰 배경+주황 "다시 시도" 버튼.
+    - **B. ErrorView + 화면별 적용**: `components/ErrorView.tsx`(기본형: 중앙 정렬+버튼 / `compact`형: 한 줄+밑줄 링크, 빈 상태 문구와 구분되게 항상 재시도 액션 포함) 신설 후 데이터 fetch 화면 전수조사 표를 만들어 적용 범위를 나눔 — 메인 콘텐츠(나라상세 그리드, 프로필 1페이지, 게시물 상세)는 ErrorView, 프로필 2페이지+는 compact, 지도/게시물 사진은 비블로킹 배너, 나머지(프로필 정보·통계·칩·filteredCount, 나라상세 color)는 영향 낮아 로그만 추가.
+    - **실버그 2건 동시 수정**: ① 프로필 무한스크롤 2페이지+ 실패 시 기존엔 `hasMore`가 그대로 true로 남아 스크롤할 때마다 같은 실패 요청이 무한 반복됐음 — 에러 분기에서 `hasMore=false`로 내려 `onEndReached` 가드가 막게 하고, 재시도는 푸터의 compact ErrorView(`retryLoadMore`)로만 허용. ② 온보딩 username 중복확인(`(onboarding)/username.tsx`)이 실패 시 error 체크 자체가 없어 `data`가 `undefined`가 되면서 `'available'`로 잘못 판정되던 조용한 버그 발견 — fail-closed 원칙으로 수정: 실패 시 `'error'` 상태로 떨어뜨려 "확인하지 못했어요·다시 시도"를 보여주고(canSubmit이 'available'일 때만 통과하는 기존 조건이 자동으로 제출을 막음) 탭하면 `runCheck` 재실행.
+    - **네트워크 실패 처리 검증**: postgrest-js 소스(`PostgrestBuilder.ts`)로 fetch 자체가 실패(비행기 모드 등)해도 `shouldThrowOnError`를 켠 적 없는 이상 예외로 throw되지 않고 `{ data: null, error }`로 정상 반환됨을 확인 — 그래서 위 error state 분기들이 서버 에러뿐 아니라 오프라인 상황에서도 동일하게 동작한다.
+    - 검증: 온보딩 fail-closed(비행기 모드 → "확인하지 못했어요"+제출 비활성 → 복구 후 정상 진행) 에뮬레이터 실기기 확인 완료, 화면별 ErrorView/배너도 에뮬레이터로 확인 완료. 프로필 무한 재시도 수정은 `hasMore` 가드가 재호출을 코드 레벨에서 원천 차단함을 사전 검증(에뮬 시나리오 실행 대신 코드 검증으로 갈음).
 - **정리 예정 (우선순위 낮음)**: `expo-modules-core`가 `package.json`에 직접 의존성으로 들어가 있음(compose.tsx의 `uuid` 사용) — `expo-doctor` 경고 대상(빌드는 막지 않음). 나중에 `expo` 패키지가 재노출하는 API로 교체할 것.
 - **출시 후 TODO**: Expo SDK 54 → 56 업그레이드(현재는 Expo Go 호환 위해 54 유지 중이었지만, 이제 네이티브 모듈들 때문에 이미 Expo Go 자체가 불가능해졌으므로 그 이유는 사실상 소멸 — 그래도 출시 안정성 위해 업그레이드는 출시 이후로 미룸).
 - **⭐ 소셜 로그인 정책 확정 (v1 범위, 못박기 — 2026-07-13)**: v1은 **이메일 + 구글 로그인만**. 카카오·네이버·애플은 v1에 넣지 않는다.
@@ -95,9 +101,9 @@
     - ✅ 나라 이름 한글화 — 완료 (위 Phase H 참고)
     - ✅ 정식 설정 화면 신설 — 완료 (위 G-3 9단계 참고)
   - **[P2 조정]**
-    - Pretendard 폰트 적용(디자인 토큰에 확정돼 있으나 아직 미적용)
-    - 에러 바운더리 추가
-    - 에러 상태 / 빈 상태(empty state) UI 구분
+    - Pretendard 폰트 적용(디자인 토큰에 확정돼 있으나 아직 미적용) ← 다음 순서
+    - ✅ 에러 바운더리 추가 — 완료 (위 Phase J 참고)
+    - ✅ 에러 상태 / 빈 상태(empty state) UI 구분 — 완료 (위 Phase J 참고)
     - 게시물 공개범위 사후 변경(현재 작성 시점에만 지정 가능)
     - 계정 공개범위(public/private) 토글 UI (PRD 9장엔 컬럼 있으나 설정 화면 없음)
   - **[출시]**

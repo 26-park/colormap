@@ -1,7 +1,8 @@
+import { ErrorView } from "@/components/ErrorView";
 import { theme } from "@/constants/theme";
 import { useAuth } from "@/context/auth";
-import { resolveMediaUrls } from "@/lib/media";
 import { getCountryNameKo } from "@/lib/countryNamesKo";
+import { resolveMediaUrls } from "@/lib/media";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -66,6 +67,8 @@ export default function ProfileScreen() {
   const [hasMore, setHasMore] = useState(true);
   const [loadingPosts, setLoadingPosts] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [postsError, setPostsError] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState(false);
   // 나라상세(app/country/[cc].tsx)와 동일한 이유로 Dimensions.get 대신 onLayout 실측 폭 사용.
   const [gridWidth, setGridWidth] = useState(SCREEN_WIDTH);
   const cellSize = (gridWidth - GRID_GAP * (NUM_COLS - 1)) / NUM_COLS;
@@ -83,7 +86,8 @@ export default function ProfileScreen() {
       .select("username, avatar_url, bio")
       .eq("id", session.user.id)
       .single()
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        if (error) console.error("프로필 조회 실패:", error);
         setUsername(data?.username ?? null);
         setAvatarUrl(data?.avatar_url ?? null);
         setBio(data?.bio ?? null);
@@ -113,6 +117,12 @@ export default function ProfileScreen() {
           .or(`user_low.eq.${userId},user_high.eq.${userId}`),
       ]);
 
+      if (countriesRes.error)
+        console.error("나라 수 조회 실패:", countriesRes.error);
+      if (postsRes.error) console.error("기록 수 조회 실패:", postsRes.error);
+      if (friendsRes.error)
+        console.error("친구 수 조회 실패:", friendsRes.error);
+
       setStats({
         countries: countriesRes.count ?? 0,
         posts: postsRes.count ?? 0,
@@ -129,8 +139,12 @@ export default function ProfileScreen() {
         console.error("my_post_countries 조회 실패:", error);
         return;
       }
-      const codes: string[] = (data ?? []).map((row: { country_code: string }) => row.country_code);
-      codes.sort((a: string, b: string) => getCountryNameKo(a).localeCompare(getCountryNameKo(b), "ko"));
+      const codes: string[] = (data ?? []).map(
+        (row: { country_code: string }) => row.country_code,
+      );
+      codes.sort((a: string, b: string) =>
+        getCountryNameKo(a).localeCompare(getCountryNameKo(b), "ko"),
+      );
       setChips(codes);
     });
   }, [userId]);
@@ -147,7 +161,8 @@ export default function ProfileScreen() {
         .eq("user_id", userId);
       if (selectedCc) query = query.eq("country_code", selectedCc);
 
-      const { count } = await query;
+      const { count, error } = await query;
+      if (error) console.error("필터된 기록 수 조회 실패:", error);
       setFilteredCount(count ?? 0);
     })();
   }, [userId, selectedCc]);
@@ -180,8 +195,16 @@ export default function ProfileScreen() {
       }
       if (error) {
         console.error("posts 페이지 조회 실패:", error);
-        if (pageIndex === 0) setLoadingPosts(false);
-        else setLoadingMore(false);
+        if (pageIndex === 0) {
+          setLoadingPosts(false);
+          setPostsError(true);
+        } else {
+          // hasMore를 false로 내려 onEndReached가 계속 같은 실패 요청을 반복하지
+          // 않게 막는다 — 재시도는 푸터의 compact ErrorView(retryLoadMore)로만.
+          setLoadingMore(false);
+          setHasMore(false);
+          setLoadMoreError(true);
+        }
         loadingRef.current = false;
         return;
       }
@@ -217,8 +240,13 @@ export default function ProfileScreen() {
       );
       setHasMore(rows.length === PAGE_SIZE);
       setPage(pageIndex);
-      if (pageIndex === 0) setLoadingPosts(false);
-      else setLoadingMore(false);
+      if (pageIndex === 0) {
+        setLoadingPosts(false);
+        setPostsError(false);
+      } else {
+        setLoadingMore(false);
+        setLoadMoreError(false);
+      }
       loadingRef.current = false;
     },
     [userId],
@@ -235,6 +263,8 @@ export default function ProfileScreen() {
     setHasMore(true);
     setLoadingMore(false);
     setLoadingPosts(true);
+    setPostsError(false);
+    setLoadMoreError(false);
 
     loadPage(0, selectedCc, sortAsc, requestId);
   }, [userId, selectedCc, sortAsc, loadPage]);
@@ -245,6 +275,26 @@ export default function ProfileScreen() {
     setLoadingMore(true);
     loadPage(page + 1, selectedCc, sortAsc, requestIdRef.current);
   }, [hasMore, page, selectedCc, sortAsc, loadPage]);
+
+  // 1페이지(메인 콘텐츠) 실패 후 재시도 — 필터/정렬은 그대로 유지한 채 같은
+  // 요청을 다시 보낸다.
+  const retryFirstPage = useCallback(() => {
+    requestIdRef.current += 1;
+    const requestId = requestIdRef.current;
+    loadingRef.current = true;
+    setLoadingPosts(true);
+    loadPage(0, selectedCc, sortAsc, requestId);
+  }, [selectedCc, sortAsc, loadPage]);
+
+  // 2페이지 이후(무한스크롤 중간) 실패 후 재시도 — hasMore가 false로 내려가
+  // onEndReached는 더 이상 자동으로 재요청하지 않으므로, 실패했던 바로 다음
+  // 페이지(page + 1)를 이 버튼으로만 다시 시도한다.
+  const retryLoadMore = useCallback(() => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    setLoadingMore(true);
+    loadPage(page + 1, selectedCc, sortAsc, requestIdRef.current);
+  }, [page, selectedCc, sortAsc, loadPage]);
 
   const listHeader = (
     <View>
@@ -368,6 +418,10 @@ export default function ProfileScreen() {
     <View style={styles.centerBody}>
       <ActivityIndicator color={theme.colors.accent} />
     </View>
+  ) : postsError ? (
+    <View style={styles.centerBody}>
+      <ErrorView onRetry={retryFirstPage} />
+    </View>
   ) : (
     <View style={styles.centerBody}>
       <Text style={styles.placeholderText}>
@@ -421,6 +475,12 @@ export default function ProfileScreen() {
             <ActivityIndicator
               color={theme.colors.accent}
               style={styles.footerSpinner}
+            />
+          ) : loadMoreError ? (
+            <ErrorView
+              compact
+              message="더 불러오지 못했어요"
+              onRetry={retryLoadMore}
             />
           ) : null
         }

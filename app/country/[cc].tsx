@@ -19,6 +19,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/auth';
 import { resolveMediaUrls } from '@/lib/media';
 import { getCountryNameKo } from '@/lib/countryNamesKo';
+import { ErrorView } from '@/components/ErrorView';
 
 const GRID_GAP = 1;
 const NUM_COLS = 3;
@@ -40,13 +41,19 @@ export default function CountryDetailScreen() {
   const [activeTab, setActiveTab] = useState<'mine' | 'all'>('mine');
   const [posts, setPosts] = useState<GridPost[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(true);
+  const [postsError, setPostsError] = useState(false);
   // G-2: 색칠 생성은 posts INSERT 트리거(G-1)만 한다 — 앱은 이미 있는 색칠의
   // 색만 바꾼다. 게시물이 있을 때만(=country_visits 행이 보장될 때만) 팔레트를 연다.
   // "내 기록/모두" 탭이 갈리면서 posts.length는 더 이상 "내 게시물 존재"를 뜻하지
   // 않게 됐다(모두 탭에선 남의 공개 게시물도 포함) — 그래서 탭과 무관하게 항상
   // 내 게시물 수만 세는 별도 count 쿼리(myPostCount)로 판단한다.
   const [myPostCount, setMyPostCount] = useState<number | null>(null);
+  // myPostCount 조회 실패 시 myPostCount는 이전 값(초기 null)을 유지해 fail-closed로
+  // 잠긴 채 남는다 — 이 플래그는 "정말 기록이 없어서 잠김"과 "확인 실패로 잠김"을
+  // 구분해 lockHint 문구와 재시도를 다르게 보여주기 위한 것.
+  const [myPostCountError, setMyPostCountError] = useState(false);
   const [lockHintVisible, setLockHintVisible] = useState(false);
+  const [lockHintText, setLockHintText] = useState('');
   const lockHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const canColor = myPostCount !== null && myPostCount > 0;
   // 최초 1회만 로딩 스피너를 보여주고, 이후 포커스 재조회는 기존 그리드를 유지한
@@ -86,25 +93,27 @@ export default function CountryDetailScreen() {
 
   // G-2 잠금 판정 전용 — 탭 상태와 무관하게 항상 "내 게시물 수"만 가볍게 센다
   // (head: true, 페이로드 없음). "모두" 탭을 보고 있어도 팔레트 잠금은 정확해야 한다.
-  useFocusEffect(
-    useCallback(() => {
-      const userId = session?.user.id;
-      if (!userId || !cc) return;
+  const loadMyPostCount = useCallback(() => {
+    const userId = session?.user.id;
+    if (!userId || !cc) return;
 
-      supabase
-        .from('posts')
-        .select('id', { count: 'exact', head: true })
-        .eq('country_code', cc)
-        .eq('user_id', userId)
-        .then(({ count, error }) => {
-          if (error) {
-            console.error('내 게시물 수 조회 실패:', error);
-            return;
-          }
-          setMyPostCount(count ?? 0);
-        });
-    }, [session?.user.id, cc]),
-  );
+    setMyPostCountError(false);
+    supabase
+      .from('posts')
+      .select('id', { count: 'exact', head: true })
+      .eq('country_code', cc)
+      .eq('user_id', userId)
+      .then(({ count, error }) => {
+        if (error) {
+          console.error('내 게시물 수 조회 실패:', error);
+          setMyPostCountError(true);
+          return;
+        }
+        setMyPostCount(count ?? 0);
+      });
+  }, [session?.user.id, cc]);
+
+  useFocusEffect(loadMyPostCount);
 
   // 이 나라(cc)의 게시물 그리드 — "내 기록" 탭이면 user_id도 필터, "모두" 탭이면
   // 무필터(RLS의 posts_select_visible이 가시성 판정). post_media를 전부 가져와
@@ -119,55 +128,57 @@ export default function CountryDetailScreen() {
   // activeTab을 의존성에 넣는 것만으로 "탭 전환 시 재조회"가 그대로 동작한다.
   // 최초 로드만 스피너를 보여주고, 이후(재포커스든 탭 전환이든)는 기존 그리드를
   // 유지한 채 교체한다(깜빡임 방지). requestIdRef로 늦게 도착한 응답은 버린다.
-  useFocusEffect(
-    useCallback(() => {
-      const userId = session?.user.id;
-      if (!cc) return;
-      if (activeTab === 'mine' && !userId) return;
-      if (!loadedPostsOnceRef.current) setLoadingPosts(true);
+  const loadPosts = useCallback(() => {
+    const userId = session?.user.id;
+    if (!cc) return;
+    if (activeTab === 'mine' && !userId) return;
+    if (!loadedPostsOnceRef.current) setLoadingPosts(true);
+    setPostsError(false);
 
-      requestIdRef.current += 1;
-      const requestId = requestIdRef.current;
+    requestIdRef.current += 1;
+    const requestId = requestIdRef.current;
 
-      (async () => {
-        let query = supabase
-          .from('posts')
-          .select('id, post_media(url, order_index)')
-          .eq('country_code', cc)
-          .order('created_at', { ascending: false });
-        if (activeTab === 'mine') query = query.eq('user_id', userId);
+    (async () => {
+      let query = supabase
+        .from('posts')
+        .select('id, post_media(url, order_index)')
+        .eq('country_code', cc)
+        .order('created_at', { ascending: false });
+      if (activeTab === 'mine') query = query.eq('user_id', userId);
 
-        const { data, error } = await query;
+      const { data, error } = await query;
 
-        if (requestId !== requestIdRef.current) return;
-        if (error) {
-          console.error('posts 조회 실패:', error);
-          setLoadingPosts(false);
-          return;
-        }
-
-        const rows = (data ?? []).map((post) => {
-          const media = [...(post.post_media ?? [])].sort((a, b) => a.order_index - b.order_index);
-          return { id: post.id, coverUrl: media[0]?.url ?? null, mediaCount: media.length };
-        });
-
-        const rawUrls = rows
-          .map((row) => row.coverUrl)
-          .filter((url): url is string => url !== null);
-        const resolved = await resolveMediaUrls(rawUrls);
-
-        if (requestId !== requestIdRef.current) return;
-        setPosts(
-          rows.map((row) => ({
-            ...row,
-            coverUrl: row.coverUrl ? resolved[row.coverUrl] ?? null : null,
-          })),
-        );
+      if (requestId !== requestIdRef.current) return;
+      if (error) {
+        console.error('posts 조회 실패:', error);
         setLoadingPosts(false);
-        loadedPostsOnceRef.current = true;
-      })();
-    }, [cc, activeTab, session?.user.id]),
-  );
+        setPostsError(true);
+        return;
+      }
+
+      const rows = (data ?? []).map((post) => {
+        const media = [...(post.post_media ?? [])].sort((a, b) => a.order_index - b.order_index);
+        return { id: post.id, coverUrl: media[0]?.url ?? null, mediaCount: media.length };
+      });
+
+      const rawUrls = rows
+        .map((row) => row.coverUrl)
+        .filter((url): url is string => url !== null);
+      const resolved = await resolveMediaUrls(rawUrls);
+
+      if (requestId !== requestIdRef.current) return;
+      setPosts(
+        rows.map((row) => ({
+          ...row,
+          coverUrl: row.coverUrl ? resolved[row.coverUrl] ?? null : null,
+        })),
+      );
+      setLoadingPosts(false);
+      loadedPostsOnceRef.current = true;
+    })();
+  }, [cc, activeTab, session?.user.id]);
+
+  useFocusEffect(loadPosts);
 
   useEffect(() => {
     return () => {
@@ -176,7 +187,16 @@ export default function CountryDetailScreen() {
   }, []);
 
   function handleColorDotPress() {
+    if (myPostCountError) {
+      setLockHintText('잠금 상태를 확인하지 못했어요 · 탭해서 다시 시도');
+      setLockHintVisible(true);
+      if (lockHintTimerRef.current) clearTimeout(lockHintTimerRef.current);
+      lockHintTimerRef.current = setTimeout(() => setLockHintVisible(false), 2000);
+      loadMyPostCount();
+      return;
+    }
     if (!canColor) {
+      setLockHintText('이 나라에 기록을 추가하면 색칠돼요');
       setLockHintVisible(true);
       if (lockHintTimerRef.current) clearTimeout(lockHintTimerRef.current);
       lockHintTimerRef.current = setTimeout(() => setLockHintVisible(false), 2000);
@@ -238,7 +258,7 @@ export default function CountryDetailScreen() {
 
         {lockHintVisible && (
           <View style={styles.lockHintWrap} pointerEvents="none">
-            <Text style={styles.lockHintText}>이 나라에 기록을 추가하면 색칠돼요</Text>
+            <Text style={styles.lockHintText}>{lockHintText}</Text>
           </View>
         )}
       </View>
@@ -264,6 +284,10 @@ export default function CountryDetailScreen() {
         {loadingPosts ? (
           <View style={styles.centerBody}>
             <ActivityIndicator color={theme.colors.accent} />
+          </View>
+        ) : postsError ? (
+          <View style={styles.centerBody}>
+            <ErrorView onRetry={loadPosts} />
           </View>
         ) : posts.length === 0 ? (
           <View style={styles.centerBody}>

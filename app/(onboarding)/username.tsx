@@ -10,7 +10,7 @@ import {
   View,
 } from 'react-native';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/auth';
@@ -19,7 +19,10 @@ import { theme } from '@/constants/theme';
 // 소문자 영문·숫자·언더스코어, 3~20자
 const USERNAME_REGEX = /^[a-z0-9_]{3,20}$/;
 
-type CheckStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
+// 'error' = 중복 확인 실패. 확인 못 한 상태에서 'available'로 잘못 넘어가면
+// 안 되므로(fail-closed) canSubmit이 'available'일 때만 통과하는 기존 조건이
+// 'error'도 자동으로 막아준다 — 대신 재시도 경로를 명시적으로 제공한다.
+type CheckStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid' | 'error';
 
 export default function UsernameScreen() {
   const { session, refreshProfile } = useAuth();
@@ -28,6 +31,20 @@ export default function UsernameScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const runCheck = useCallback(async (name: string) => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('username', name)
+      .maybeSingle();
+    if (error) {
+      console.error('username 중복 확인 실패:', error);
+      setStatus('error');
+      return;
+    }
+    setStatus(data ? 'taken' : 'available');
+  }, []);
 
   // username 변경 시 디바운스 중복 체크
   useEffect(() => {
@@ -43,19 +60,19 @@ export default function UsernameScreen() {
     }
 
     setStatus('checking');
-    debounceTimer.current = setTimeout(async () => {
-      const { data } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('username', username)
-        .maybeSingle();
-      setStatus(data ? 'taken' : 'available');
+    debounceTimer.current = setTimeout(() => {
+      runCheck(username);
     }, 500);
 
     return () => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
     };
-  }, [username]);
+  }, [username, runCheck]);
+
+  const handleRetryCheck = () => {
+    setStatus('checking');
+    runCheck(username);
+  };
 
   const handleSubmit = async () => {
     if (status !== 'available' || !session) return;
@@ -111,6 +128,7 @@ export default function UsernameScreen() {
               status === 'available' && styles.inputRowAvailable,
               status === 'taken' && styles.inputRowTaken,
               status === 'invalid' && styles.inputRowTaken,
+              status === 'error' && styles.inputRowTaken,
             ]}>
               <Text style={styles.atSign}>@</Text>
               <TextInput
@@ -131,7 +149,7 @@ export default function UsernameScreen() {
               )}
             </View>
 
-            <StatusHint status={status} username={username} />
+            <StatusHint status={status} username={username} onRetry={handleRetryCheck} />
           </View>
 
           {submitError && <Text style={styles.submitError}>{submitError}</Text>}
@@ -158,11 +176,26 @@ export default function UsernameScreen() {
   );
 }
 
-function StatusHint({ status, username }: { status: CheckStatus; username: string }) {
+function StatusHint({
+  status,
+  username,
+  onRetry,
+}: {
+  status: CheckStatus;
+  username: string;
+  onRetry: () => void;
+}) {
   if (status === 'idle') return null;
   if (status === 'checking') return <Text style={styles.hintNeutral}>확인 중...</Text>;
   if (status === 'available') return <Text style={styles.hintAvailable}>✓ 사용 가능한 username이에요</Text>;
   if (status === 'taken') return <Text style={styles.hintTaken}>✗ 이미 사용 중인 username이에요</Text>;
+  if (status === 'error') {
+    return (
+      <Pressable onPress={onRetry}>
+        <Text style={styles.hintTaken}>확인하지 못했어요 · 다시 시도</Text>
+      </Pressable>
+    );
+  }
   if (status === 'invalid') {
     if (username.length < 3) return <Text style={styles.hintTaken}>최소 3자 이상 입력해주세요</Text>;
     return <Text style={styles.hintTaken}>영문 소문자·숫자·_만 사용 가능해요</Text>;

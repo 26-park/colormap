@@ -23,6 +23,7 @@ import { deletePost, type PostVisibility } from '@/lib/posts';
 import { getCountryName } from '@/lib/countryFromCoord';
 import { getCountryNameKo } from '@/lib/countryNamesKo';
 import { useAuth } from '@/context/auth';
+import { ErrorView } from '@/components/ErrorView';
 import countriesGeoJSON from '@/assets/geo/countries.json';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -68,22 +69,28 @@ export default function PostDetailScreen() {
 
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [fetchError, setFetchError] = useState(false);
+  const [mediaLoadError, setMediaLoadError] = useState(false);
   const [post, setPost] = useState<PostDetail | null>(null);
   const [photoUrls, setPhotoUrls] = useState<string[]>([]);
   const [carouselWidth, setCarouselWidth] = useState(SCREEN_WIDTH);
   const [activeIndex, setActiveIndex] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // 재시도 버튼이 누르면 값을 올려 아래 useEffect를 다시 실행시키는 트리거 —
+  // 쿼리 자체는 그대로, id가 안 바뀌어도 같은 조회를 다시 돌리기 위한 것.
+  const [retryToken, setRetryToken] = useState(0);
 
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
     setLoading(true);
     setNotFound(false);
+    setFetchError(false);
+    setMediaLoadError(false);
 
     (async () => {
       // RLS(posts_select_visible)가 가시성을 강제하므로 쿼리는 id 필터만 건다.
-      // 결과가 없으면 삭제됐거나 볼 수 없는 게시물 — 둘 다 같은 안내로 처리.
       // posts.location(geography)은 그대로 select하면 WKB 16진수라 파싱이 안 돼서
       // posts_with_coords 뷰(ST_X/ST_Y로 lng/lat 미리 계산, Phase E)를 대신 조회한다.
       const { data, error } = await supabase
@@ -94,10 +101,15 @@ export default function PostDetailScreen() {
 
       if (cancelled) return;
 
+      // error 있으면 네트워크/서버 문제 — 재시도 가능한 에러로 처리.
+      // error 없이 data만 없으면 삭제됐거나 볼 수 없는 게시물(정상적인 404).
       if (error) {
         console.error('[Phase E] 게시물 조회 실패:', error);
+        setFetchError(true);
+        setLoading(false);
+        return;
       }
-      if (error || !data) {
+      if (!data) {
         setNotFound(true);
         setLoading(false);
         return;
@@ -126,6 +138,7 @@ export default function PostDetailScreen() {
 
       if (mediaError) {
         console.error('[Phase E] post_media 조회 실패:', mediaError);
+        setMediaLoadError(true);
       }
 
       const rawUrls = (mediaRows ?? []).map((m) => m.url);
@@ -139,7 +152,7 @@ export default function PostDetailScreen() {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, retryToken]);
 
   function handleCarouselScrollEnd(event: NativeSyntheticEvent<NativeScrollEvent>) {
     if (carouselWidth === 0) return;
@@ -217,12 +230,22 @@ export default function PostDetailScreen() {
         <View style={styles.centerBody}>
           <ActivityIndicator color={theme.colors.accent} />
         </View>
+      ) : fetchError ? (
+        <View style={styles.centerBody}>
+          <ErrorView onRetry={() => setRetryToken((t) => t + 1)} />
+        </View>
       ) : notFound || !post ? (
         <View style={styles.centerBody}>
           <Text style={styles.placeholderText}>볼 수 없는 게시물이에요</Text>
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          {mediaLoadError && (
+            <Pressable style={styles.mediaErrorRow} onPress={() => setRetryToken((t) => t + 1)}>
+              <Text style={styles.mediaErrorText}>사진을 불러오지 못했어요 · 다시 시도</Text>
+            </Pressable>
+          )}
+
           {/* 사진 캐러셀 */}
           {photoUrls.length > 0 && (
             <View onLayout={(e) => setCarouselWidth(e.nativeEvent.layout.width)}>
@@ -384,6 +407,15 @@ const styles = StyleSheet.create({
 
   scrollContent: {
     paddingBottom: 40,
+  },
+
+  mediaErrorRow: {
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  mediaErrorText: {
+    fontSize: 13,
+    color: theme.colors.textSecondary,
   },
 
   // 사진 캐러셀

@@ -47,31 +47,36 @@ export default function MapScreen() {
   const router = useRouter();
   const { session } = useAuth();
   const [visitedMap, setVisitedMap] = useState<Record<string, string>>({});
+  const [colorLoadError, setColorLoadError] = useState(false);
 
   // 지도 탭이 포커스될 때마다 재조회 — 나라상세에서 색 바꾸고 돌아오면 즉시 반영.
   // 재조회 중에도 기존 visitedMap을 유지하다 새 데이터 도착 시 교체(깜빡임 없음).
-  useFocusEffect(
-    useCallback(() => {
-      const userId = session?.user.id;
-      if (!userId) return;
+  // 지도 자체는 실패해도 정상 렌더되므로(그냥 색칠이 비는 것) 전체를 덮는 에러 UI
+  // 대신 방해되지 않는 작은 배너로만 안내한다.
+  const loadVisited = useCallback(() => {
+    const userId = session?.user.id;
+    if (!userId) return;
 
-      supabase
-        .from('country_visits')
-        .select('country_code, color')
-        .eq('user_id', userId)
-        .then(({ data, error }) => {
-          if (error) {
-            console.error('country_visits 조회 실패:', error);
-            return;
-          }
-          const map: Record<string, string> = {};
-          for (const row of data ?? []) {
-            map[row.country_code] = row.color;
-          }
-          setVisitedMap(map);
-        });
-    }, [session?.user.id]),
-  );
+    setColorLoadError(false);
+    supabase
+      .from('country_visits')
+      .select('country_code, color')
+      .eq('user_id', userId)
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('country_visits 조회 실패:', error);
+          setColorLoadError(true);
+          return;
+        }
+        const map: Record<string, string> = {};
+        for (const row of data ?? []) {
+          map[row.country_code] = row.color;
+        }
+        setVisitedMap(map);
+      });
+  }, [session?.user.id]);
+
+  useFocusEffect(loadVisited);
 
   function handleCountryPress(event: NativeSyntheticEvent<PressEventWithFeatures>) {
     const feature = event.nativeEvent.features[0];
@@ -114,20 +119,28 @@ export default function MapScreen() {
 
       {/* ── 상단 헤더 오버레이 ── */}
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-        <Text style={styles.logo}>Tintrail</Text>
+        <View style={styles.headerRow}>
+          <Text style={styles.logo}>Tintrail</Text>
 
-        {/* 평면지도/지구본 정적 토글 — 지구본 전환 기능은 다음 Phase */}
-        <View style={styles.togglePill}>
-          <View style={[styles.toggleOption, styles.toggleOptionActive]}>
-            <Text style={[styles.toggleText, styles.toggleTextActive]}>평면지도</Text>
+          {/* 평면지도/지구본 정적 토글 — 지구본 전환 기능은 다음 Phase */}
+          <View style={styles.togglePill}>
+            <View style={[styles.toggleOption, styles.toggleOptionActive]}>
+              <Text style={[styles.toggleText, styles.toggleTextActive]}>평면지도</Text>
+            </View>
+            <View style={styles.toggleOption}>
+              <Text style={styles.toggleText}>지구본</Text>
+            </View>
           </View>
-          <View style={styles.toggleOption}>
-            <Text style={styles.toggleText}>지구본</Text>
-          </View>
+
+          {/* 아바타 플레이스홀더 */}
+          <View style={styles.avatar} />
         </View>
 
-        {/* 아바타 플레이스홀더 */}
-        <View style={styles.avatar} />
+        {colorLoadError && (
+          <TouchableOpacity style={styles.colorErrorBanner} onPress={loadVisited}>
+            <Text style={styles.colorErrorBannerText}>색칠 정보를 불러오지 못했어요 · 다시 시도</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* ── 우측 줌 버튼 (정적 — 기능은 다음 Phase) ── */}
@@ -156,17 +169,33 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
+    paddingBottom: 12,
+  },
+  headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingBottom: 12,
   },
   logo: {
     fontSize: 20,
     fontWeight: '700',
     color: theme.colors.accent,
     letterSpacing: -0.3,
+  },
+  colorErrorBanner: {
+    marginTop: 8,
+    marginHorizontal: 16,
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(220,38,38,0.08)',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 10,
+  },
+  colorErrorBannerText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: theme.colors.error,
   },
 
   // 토글 필
