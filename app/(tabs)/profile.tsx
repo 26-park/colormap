@@ -5,6 +5,7 @@ import { useAuth } from "@/context/auth";
 import { getCountryNameKo } from "@/lib/countryNamesKo";
 import { resolveMediaUrls } from "@/lib/media";
 import { supabase } from "@/lib/supabase";
+import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -77,6 +78,30 @@ export default function ProfileScreen() {
   // loadingRef: onEndReached 중복 호출(같은 프레임에서 여러 번 발생 가능) 동기 가드.
   const requestIdRef = useRef(0);
   const loadingRef = useRef(false);
+
+  // 받은 친구 요청 개수(뱃지 dot 용) — count 전용(head: true), 행 데이터는 가져오지
+  // 않는다. 포커스마다 재조회(country/[cc].tsx와 동일 패턴) — 친구 화면에서
+  // 수락/거절하고 돌아왔을 때 즉시 갱신되게 하기 위함.
+  const [pendingRequestCount, setPendingRequestCount] = useState(0);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!userId) return;
+      supabase
+        .from("friendships")
+        .select("user_low", { count: "exact", head: true })
+        .eq("status", "pending")
+        .neq("requested_by", userId)
+        .or(`user_low.eq.${userId},user_high.eq.${userId}`)
+        .then(({ count, error }) => {
+          if (error) {
+            console.error("받은 친구 요청 수 조회 실패:", error);
+            return;
+          }
+          setPendingRequestCount(count ?? 0);
+        });
+    }, [userId]),
+  );
 
   // 프로필 (username, avatar_url, bio)
   useEffect(() => {
@@ -300,7 +325,13 @@ export default function ProfileScreen() {
     <View>
       {/* 헤더 */}
       <View style={styles.header}>
-        <View style={styles.headerSpacer} />
+        <Pressable
+          style={styles.friendsBtn}
+          onPress={() => router.push("/friends" as any)}
+        >
+          <Text style={styles.settingsIcon}>👥</Text>
+          {pendingRequestCount > 0 && <View style={styles.badgeDot} />}
+        </Pressable>
         <Pressable
           style={styles.settingsBtn}
           onPress={() => router.push("/settings" as any)}
@@ -509,8 +540,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
   },
-  headerSpacer: {
+  friendsBtn: {
     width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#f3f4f6",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badgeDot: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: theme.colors.accent,
+    borderWidth: 1.5,
+    borderColor: theme.colors.background,
   },
   settingsBtn: {
     width: 36,
