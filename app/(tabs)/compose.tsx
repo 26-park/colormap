@@ -15,7 +15,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { decode } from 'base64-arraybuffer';
-import { uuid } from 'expo-modules-core';
+import * as Crypto from 'expo-crypto';
 import * as Location from 'expo-location';
 import { Map, Camera, Marker, GeoJSONSource, Layer, type PressEvent } from '@maplibre/maplibre-react-native';
 import { Text } from '@/components/AppText';
@@ -65,7 +65,7 @@ export default function ComposeScreen() {
   const initialCenter = entryCc ? getCountryCentroid(entryCc) : null;
 
   // savePost(C-2-3a)와 사진 업로드 경로가 같은 postId를 공유 — 게시 전에도 미리 생성해둔다.
-  const [postId] = useState(() => uuid.v4());
+  const [postId] = useState(() => Crypto.randomUUID());
 
   const [pickedCoord, setPickedCoord] = useState<PickedCoord | null>(null);
   const [countryMatch, setCountryMatch] = useState<CountryMatch | null>(null);
@@ -131,7 +131,7 @@ export default function ComposeScreen() {
     if (result.canceled || result.assets.length === 0) return;
 
     const assets = result.assets.slice(0, remaining);
-    const newItems: PhotoItem[] = assets.map((asset) => ({ id: uuid.v4(), uri: asset.uri, status: 'resizing' }));
+    const newItems: PhotoItem[] = assets.map((asset) => ({ id: Crypto.randomUUID(), uri: asset.uri, status: 'resizing' }));
     setPhotos((prev) => [...prev, ...newItems]);
 
     for (let i = 0; i < assets.length; i++) {
