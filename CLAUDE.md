@@ -46,7 +46,7 @@
 - **디자인 단계 완료**: 디자인 토큰·네비게이션·화면별 사양 확정 → docs/PRD.md 6~8장에 반영.
 - **🎉 P2 전체 완료 (2026-07-20)**: 에러 처리 체계화(Phase J) / Pretendard 폰트(Phase K) / 공개범위 묶음(Phase L) / 의존성 정리(Phase M) 4개 전부 끝났다. P0/P1/P2 다 완료.
 - **⭐ 다음 세션 시작점**: 아래 로드맵 순서대로 (배경은 바로 아래 "⭐ 출시 시점 방향 결정" 참고).
-  1. 친구 기능 (상호 수락) — ⚠️ 착수 전 "권한/가시성 모델" 섹션의 ⛔ 차단 조건(country_visits RLS를 "뷰어에게 보이는 게시물이 있는 나라만"으로 먼저 수정)부터 확인·처리할 것. 남의 지도/기록을 조회하는 화면을 만들기 전이 마지막 타이밍.
+  1. 친구 기능 UI (찾기 → 요청 → 수락 → 목록) — RLS/DB 기반은 Phase N에서 이미 완료(⛔ 차단 조건 해소, friendships INSERT/UPDATE 보강). ⚠️ username 검색 인프라가 없음(`pg_trgm` 확장도, 검색 RPC도 없음 — `profiles.username`엔 정확 일치/prefix용 암묵적 unique btree뿐) — "친구 찾기" 화면을 만들려면 이것부터 설계해야 함.
   2. 좋아요
   3. 댓글
   4. 장소검색(지오코딩) / 3D 지구본 토글
@@ -108,6 +108,11 @@
     - `expo` 패치 버전 정렬: `npx expo install --fix`로 `54.0.35` → `~54.0.36`(SDK 54 안에서의 패치, 메이저/마이너 업그레이드 아님). `git diff`로 lockfile 변경분이 `expo` 자체와 그 CLI 툴체인 하위 의존성(`@expo/cli`, `@expo/config*` 등) + 신규 `expo-crypto`뿐임을 확인, 관련 없는 패키지(react-native, maplibre, supabase-js 등) 변경 없음.
     - **⚠️ `expo-crypto`는 네이티브 모듈** — JS 핫리로드로는 안 잡히고 `npx expo run:android` 재빌드가 필요하다(같은 이유로 향후 새 네이티브 모듈을 추가할 때마다 이 점을 기억할 것). 재빌드 전 에뮬레이터 저장공간을 `adb shell df -h /data`로 먼저 확인하는 습관 유지(과거 INSUFFICIENT_STORAGE로 설치가 막힌 이력 있음, G-3 감사 기록).
     - 검증: `expo-doctor` 18/18 통과(기존 2건 — expo-modules-core 직접 의존, expo 패치 버전 — 둘 다 해소), `tsc` 클린, 재빌드 후 logcat에 크래시/네이티브 모듈 에러 없음, 스모크(지도→나라상세→프로필→**실제 글 작성**→상세 확인→설정) 전부 통과. 새로 만든 게시물의 `id`를 DB에서 직접 조회해 `Crypto.randomUUID()`가 기존 `uuid.v4()`와 동일한 v4 포맷(소문자, 하이픈, 버전/variant 니블 정상)임을 확인 — 눈으로 보는 대신 SQL로 확정. 테스트 글은 확인 후 삭제.
+  - Phase N: **친구 기능 킥오프 — 가시성 판정 통합 + RLS 보강 완료**(2026-07-20, 마이그레이션 `20260720100000_friend_kickoff_rls_hardening.sql`). 친구 UI 자체는 아직 없음 — 이번엔 DB 기반만.
+    - **⛔ 차단 조건 해소**: `country_visits_select_visible`을 "본인 행은 무조건 통과 + 남의 행은 뷰어가 볼 수 있는 게시물이 그 나라에 하나라도 있어야 노출"로 재작성. 인덱스 추가 없음(기존 `posts_country_idx(country_code, user_id)`가 새 정책의 `exists` 서브쿼리에 그대로 맞아떨어짐 — `explain analyze`로 확인).
+    - **`can_view_post(p posts, viewer uuid)` 함수 신설**: 기존 `posts_select_visible`의 조건을 문자 그대로 옮긴 것(케이스별 대조표로 동치 확인, 로직 변경 없음). `posts_select_visible`과 `country_visits_select_visible`이 이제 이 함수 하나를 공유 — 두 곳에 조건을 복붙하면 나중에 어긋날 위험을 원천 차단. `security invoker`(내부에서 참조하는 `profiles_select_all`이 이미 `using (true)`라 정의자 권한 불필요, `are_friends()`는 자체적으로 `security definer`).
+    - **friendships RLS 구멍 2건 추가 발견 및 보강** (⛔ 작업과 무관하게 조사 중 발견): ① INSERT에 `status` 제약이 없어 `'accepted'`를 직접 넣어 상대 동의 없이 "이미 수락된" 관계를 혼자 만들 수 있었음 → `status='pending'`일 때만 INSERT 허용으로 수정. ② UPDATE가 당사자면 누구나 가능이라 요청자 본인이 자기 요청을 스스로 accepted로 바꿀 수 있었음 → USING에 "요청받은 쪽(비요청자)만 + 현재 pending"을, WITH CHECK에 "결과가 accepted"를 걸어 가능한 전환을 pending→accepted 하나로 제한(accepted 이후엔 UPDATE 자체가 안 되고 DELETE만). RLS만으론 "이전 행과 identical해야 함"을 표현할 수 없어서, UPDATE 시 `user_low`/`user_high`/`requested_by`/`created_at` 변조를 막는 `friendships_lock_identity` 트리거를 추가로 둠(G-1과 같은 "RLS로 못 거는 불변식은 트리거로" 패턴).
+    - **검증 방법론**: `supabase db query`가 멀티스테이트먼트 스크립트에서 마지막 statement 결과만 돌려주는 걸 발견 → 각 시나리오 결과를 temp table에 적재했다가 마지막에 한 번에 조회하는 방식으로 우회(`scripts/verify-friends-rls.sql`, 롤백 트랜잭션 + `set local role authenticated` + `request.jwt.claims`로 특정 유저 흉내). INSERT 위반은 예외(`insufficient_privilege`)로, UPDATE의 USING 위반은 예외 없이 조용한 0행으로 끝난다는 차이를 발견해 판정 로직을 분리(전자는 예외 캐치, 후자는 `GET DIAGNOSTICS`로 영향 행 수 확인). 리허설(전체 rollback) → 실제 적용(`db push`) → 같은 스크립트로 라이브 재검증까지 2회 실행, 18개 시나리오(비공개/공개/본인 조회, friendships INSERT/UPDATE 구멍 차단, 수락 흐름, posts 가시성 매트릭스 3×3, `posts_country_idx` 사용 확인) 전부 통과 확인. 앱 쪽은 코드 변경이 없어 재빌드 없이 스모크(지도/나라상세/프로필/게시물상세)만 확인, 이상 없음.
 - **무해 판정 경고 (조치 안 함, 이유 기록 — Phase M 조사에서 발견)**:
   - `npm audit` 2건 — ① `postcss <8.5.10`(CSS Stringify XSS) ② `uuid <11.1.1`(v3/v5/v6 buffer bounds). 둘 다 `@expo/metro-config`/`@expo/config-plugins`/`xcode` 등 **Expo CLI 빌드 툴체인의 전이 의존성**이라 로컬 PC에서 `expo start`/`prebuild`할 때만 관여하고 **출시된 앱 런타임(사용자 기기)엔 포함되지 않음**. `npm audit fix --force`가 제시하는 유일한 수정 경로가 `expo@57.0.7` 메이저 업그레이드뿐이라 지금은 조치 불필요 — 위 "출시 후 TODO"의 SDK 업그레이드 때 자연히 같이 해결됨.
   - ⭐ **헷갈리지 말 것**: 위 audit의 `uuid`는 npm 레지스트리의 **`uuid` 패키지**(node_modules 안, xcode가 물고 있는 것)이고, 이번에 `expo-crypto`로 교체한 건 `expo-modules-core`가 export하던 **`uuid` 유틸(패키지 아님, JS API)**이다 — 이름만 같은 완전히 별개의 것. compose.tsx 쪽은 이미 교체 완료, audit의 `uuid` 패키지는 위 항목대로 SDK 업그레이드 때 처리.
@@ -180,7 +185,10 @@
   4. P가 public → A가 public이면 모두 / A가 private이면 친구만
 - **탐색 피드** = (A public AND P public) ∪ (A가 내 친구 AND P가 public 또는 friends)
 - ⚠️ 이 권한은 **클라이언트가 아니라 Supabase RLS(DB)로 강제**한다. 클라이언트 필터만으로 막지 말 것.
-- ⛔ **친구 기능 선행 조건 (P2 공개범위 작업 중 발견, 2026-07-19)**: 남의 `country_visits`를 조회하는 화면/쿼리를 새로 만들기 전에 `country_visits_select_visible` 정책을 "뷰어에게 보이는 게시물이 있는 나라만"으로 수정할 것. 지금은 `country_visits` 행이 "그 나라에 게시물이 하나라도 있으면"(개별 게시물 가시성 무관) 생성되므로, 비공개 게시물만 있는 나라도 계정이 public이면 남에게 "방문 사실"이 그대로 노출된다(내용은 안 새지만 나라를 다녀왔다는 사실은 샘). 지금은 이걸 조회하는 화면이 없어서 잠재 결함으로만 남아있음 — 친구 기능(다음 마일스톤)에서 "남의 지도/프로필" 같은 화면이 생기면 이 조건부터 확인.
+- ✅ ~~⛔ 친구 기능 선행 조건~~ **해소 완료 (2026-07-20, Phase N)** — `country_visits_select_visible`을 "뷰어가 볼 수 있는 게시물이 그 나라에 하나라도 있어야" 노출하도록 재작성함(마이그레이션 `20260720100000_friend_kickoff_rls_hardening.sql`). 해소 근거: 리허설(rollback) + 라이브 적용 후 재검증 둘 다 시나리오 1(비공개 글만 있는 나라 → 타인에게 country_visits 0행, 수정 전이었다면 1이 나왔을 자리) 포함 18개 시나리오 전부 통과.
+- ⭐ **가시성 판정 단일 소스 (2026-07-20 확정)**: 게시물 가시성 판정은 반드시 `can_view_post(p posts, viewer uuid)` 함수를 경유할 것 — **조건을 다른 정책에 복붙 금지**. 지금 `posts_select_visible`과 `country_visits_select_visible`이 이 함수 하나를 공유한다. **좋아요·댓글 RLS를 만들 때도 이 함수를 재사용할 것** — 지금 있는 `post_likes_select_if_post_visible`/`comments_select_if_post_visible`는 `exists (select 1 from posts where posts.id = ...)`로 posts 테이블 자체의 RLS(=can_view_post)에 암묵적으로 얹혀가는 방식이라 이미 안전하지만, 가시성 조건을 직접 다시 쓰는 새 정책이 필요해지면 반드시 `can_view_post` 호출로 만들 것.
+- **friendships 상태 전이 규칙 (2026-07-20 확정, RLS + 트리거로 강제)**: INSERT는 `status='pending'`일 때만 허용(직접 `accepted`로 생성 불가) / pending→accepted 전환(UPDATE)은 **요청받은 쪽(비요청자)만** 가능, 요청자 본인은 셀프 수락 불가 / **accepted가 된 뒤엔 그 행을 UPDATE로 더 바꿀 수 없음** — 끊기·거절은 항상 DELETE(둘 다 동일 처리). `friendships_lock_identity` 트리거가 UPDATE 시 `user_low`/`user_high`/`requested_by`/`created_at` 변조를 막는다(RLS의 USING/WITH CHECK만으론 "이전 행과 동일해야 함"을 표현할 수 없어 트리거로 보강한 것).
+- **RLS 검증 하네스**: `scripts/verify-friends-rls.sql` — 롤백 트랜잭션 안에서 `set local role authenticated` + `request.jwt.claims`로 특정 유저를 흉내내 정책을 실제로 검증하는 패턴(각 시나리오 결과를 temp table에 모아뒀다가 마지막에 한 번에 조회 — `supabase db query`가 멀티스테이트먼트 스크립트에서 마지막 statement 결과만 돌려주는 걸 발견해서 우회한 방식). 이후 posts/country_visits/friendships RLS를 다시 건드릴 때(좋아요·댓글 등) 이 파일을 복제해서 시나리오만 바꿔 재사용할 것.
 
 ## 장소 기록 방식
 
