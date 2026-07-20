@@ -16,10 +16,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Map, Camera, Marker, GeoJSONSource, Layer } from '@maplibre/maplibre-react-native';
 import { Text } from '@/components/AppText';
+import { VisibilitySelector } from '@/components/VisibilitySelector';
 import { theme } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import { resolveMediaUrls } from '@/lib/media';
-import { deletePost, type PostVisibility } from '@/lib/posts';
+import { deletePost, VISIBILITY_LABELS, type PostVisibility } from '@/lib/posts';
 import { getCountryName } from '@/lib/countryFromCoord';
 import { getCountryNameKo } from '@/lib/countryNamesKo';
 import { useAuth } from '@/context/auth';
@@ -35,12 +36,6 @@ const PREVIEW_MAP_STYLE = {
   layers: [
     { id: 'background', type: 'background', paint: { 'background-color': '#EBF1F7' } },
   ],
-};
-
-const VISIBILITY_LABELS: Record<PostVisibility, string> = {
-  public: '전체공개',
-  friends: '친구공개',
-  private: '비공개',
 };
 
 type PostDetail = {
@@ -76,6 +71,7 @@ export default function PostDetailScreen() {
   const [carouselWidth, setCarouselWidth] = useState(SCREEN_WIDTH);
   const [activeIndex, setActiveIndex] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [visibilityPickerOpen, setVisibilityPickerOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   // 재시도 버튼이 누르면 값을 올려 아래 useEffect를 다시 실행시키는 트리거 —
   // 쿼리 자체는 그대로, id가 안 바뀌어도 같은 조회를 다시 돌리기 위한 것.
@@ -209,6 +205,25 @@ export default function PostDetailScreen() {
     }
   }
 
+  // P2 공개범위 변경. 나라 색 변경(country/[cc].tsx)과 달리 선택 즉시 화면에
+  // 반영하고, 실패하면 이전 값으로 되돌린다(결정 사항 — 낙관적 업데이트 + 원복).
+  async function handleVisibilityChange(newVisibility: PostVisibility) {
+    if (!id || !post) return;
+    setVisibilityPickerOpen(false);
+    if (newVisibility === post.visibility) return;
+
+    const prevVisibility = post.visibility;
+    setPost({ ...post, visibility: newVisibility });
+
+    const { error } = await supabase.from('posts').update({ visibility: newVisibility }).eq('id', id);
+
+    if (error) {
+      console.error('[P2] 공개범위 변경 실패:', error);
+      setPost((prev) => (prev ? { ...prev, visibility: prevVisibility } : prev));
+      Alert.alert('변경하지 못했어요', '다시 시도해주세요.');
+    }
+  }
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       {/* 헤더 */}
@@ -327,7 +342,7 @@ export default function PostDetailScreen() {
         </ScrollView>
       )}
 
-      {/* ··· 메뉴 바텀시트 — 본인 게시물에서만 (지금은 삭제 하나뿐) */}
+      {/* ··· 메뉴 바텀시트 — 본인 게시물에서만 */}
       <Modal
         visible={menuOpen}
         transparent
@@ -337,9 +352,35 @@ export default function PostDetailScreen() {
         <View style={styles.modalRoot}>
           <Pressable style={styles.backdrop} onPress={() => setMenuOpen(false)} />
           <View style={styles.sheet}>
+            <Pressable
+              style={styles.menuItem}
+              onPress={() => {
+                setMenuOpen(false);
+                setVisibilityPickerOpen(true);
+              }}
+            >
+              <Text style={styles.menuItemText}>공개범위 변경</Text>
+            </Pressable>
+            <View style={styles.menuDivider} />
             <Pressable style={styles.menuItem} onPress={handleDeletePress}>
               <Text style={styles.menuItemTextDanger}>삭제</Text>
             </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 공개범위 변경 바텀시트 */}
+      <Modal
+        visible={visibilityPickerOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setVisibilityPickerOpen(false)}
+      >
+        <View style={styles.modalRoot}>
+          <Pressable style={styles.backdrop} onPress={() => setVisibilityPickerOpen(false)} />
+          <View style={styles.sheet}>
+            <Text style={styles.sheetTitle}>공개범위</Text>
+            {post && <VisibilitySelector value={post.visibility} onChange={handleVisibilityChange} />}
           </View>
         </View>
       </Modal>
@@ -527,9 +568,25 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 36,
   },
+  sheetTitle: {
+    fontSize: 13,
+    fontFamily: theme.fonts.semibold,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: 12,
+  },
   menuItem: {
     paddingVertical: 16,
     alignItems: 'center',
+  },
+  menuItemText: {
+    fontSize: 16,
+    fontFamily: theme.fonts.semibold,
+    color: theme.colors.text,
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: theme.colors.border,
   },
   menuItemTextDanger: {
     fontSize: 16,

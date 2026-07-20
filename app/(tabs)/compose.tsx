@@ -19,6 +19,7 @@ import { uuid } from 'expo-modules-core';
 import * as Location from 'expo-location';
 import { Map, Camera, Marker, GeoJSONSource, Layer, type PressEvent } from '@maplibre/maplibre-react-native';
 import { Text } from '@/components/AppText';
+import { VisibilitySelector } from '@/components/VisibilitySelector';
 import { theme } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/auth';
@@ -39,12 +40,6 @@ const PICKER_MAP_STYLE = {
     { id: 'background', type: 'background', paint: { 'background-color': '#EBF1F7' } },
   ],
 };
-
-const VISIBILITY_OPTIONS: { value: PostVisibility; label: string }[] = [
-  { value: 'public', label: '전체공개' },
-  { value: 'friends', label: '친구공개' },
-  { value: 'private', label: '비공개' },
-];
 
 type PickedCoord = {
   lng: number;
@@ -356,19 +351,7 @@ export default function ComposeScreen() {
 
         {/* ── 공개 범위 ── */}
         <Text style={styles.sectionTitle}>공개 범위</Text>
-        <View style={styles.visibilityToggle}>
-          {VISIBILITY_OPTIONS.map((opt) => (
-            <TouchableOpacity
-              key={opt.value}
-              style={[styles.visibilityBtn, visibility === opt.value && styles.visibilityBtnActive]}
-              onPress={() => setVisibility(opt.value)}
-            >
-              <Text style={[styles.visibilityBtnText, visibility === opt.value && styles.visibilityBtnTextActive]}>
-                {opt.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        <VisibilitySelector value={visibility} onChange={setVisibility} />
       </ScrollView>
     </SafeAreaView>
   );
@@ -612,31 +595,5 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#fff',
     fontFamily: theme.fonts.bold,
-  },
-
-  // 공개 범위
-  visibilityToggle: {
-    flexDirection: 'row',
-    backgroundColor: '#f3f4f6',
-    borderRadius: theme.radius.card,
-    padding: 4,
-    gap: 4,
-  },
-  visibilityBtn: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: theme.radius.input,
-    alignItems: 'center',
-  },
-  visibilityBtnActive: {
-    backgroundColor: theme.colors.accent,
-  },
-  visibilityBtnText: {
-    fontSize: 13,
-    fontFamily: theme.fonts.semibold,
-    color: theme.colors.textSecondary,
-  },
-  visibilityBtnTextActive: {
-    color: '#fff',
   },
 });

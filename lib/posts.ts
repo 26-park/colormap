@@ -3,6 +3,22 @@ import { isExternalUrl } from '@/lib/media';
 
 export type PostVisibility = 'public' | 'friends' | 'private';
 
+export const VISIBILITY_LABELS: Record<PostVisibility, string> = {
+  public: '전체공개',
+  friends: '친구공개',
+  private: '비공개',
+};
+
+// friends는 친구 기능이 없는 지금 사실상 "나만 보임"과 동일한 효과라 hidden으로
+// 새 선택을 막는다 — 단, 이미 friends로 저장된 기존 글을 편집할 때는 그 값이
+// 사라진 척하지 않도록 렌더링 쪽에서 "현재 선택값이면 예외적으로 보여준다".
+// 친구 기능 출시 시 이 hidden만 지우면 compose/게시물 편집 둘 다 자동으로 열림.
+export const VISIBILITY_OPTIONS: { value: PostVisibility; hidden?: boolean }[] = [
+  { value: 'public' },
+  { value: 'friends', hidden: true },
+  { value: 'private' },
+];
+
 export type SavePostParams = {
   postId: string;
   userId: string;
