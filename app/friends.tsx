@@ -52,11 +52,35 @@ type AcceptOutcome =
   | 'blocked' // 0행인데 여전히 pending — 정말로 막힌 것
   | 'error'; // 네트워크/서버 에러
 
+// 거절/끊기(둘 다 DELETE) 결과. DELETE도 RLS USING 위반이 0행으로 조용히
+// 끝나므로 수락과 같은 판정을 쓴다 — 다만 '이미 사라짐'은 목표 상태와 같으므로
+// 성공으로 취급한다.
+type RemoveOutcome =
+  | 'removed' // 1행 삭제
+  | 'gone' // 0행 + 관계가 이미 없음 — 목표 달성이라 성공 취급
+  | 'blocked' // 0행인데 관계는 그대로 — 정말로 막힌 것
+  | 'error';
+
+// 진행 중 표시가 필요한 액션만. 거절·요청취소는 낙관적이라 즉시 화면에서 사라져
+// 스피너를 걸 자리가 없다(아래 handleRejectFromList 주석 참고).
+type ActingKind = 'accept' | 'unfriend';
+
 // Postgres uuid 비교는 표준 소문자 정형 문자열(8-4-4-4-12, 하이픈 고정 위치)의
 // 문자열 비교와 동치 — 초기 스키마의 least(a,b)/greatest(a,b)와 같은 규칙을
 // 클라이언트에서 그대로 재현한다.
 function sortedPair(a: string, b: string): [string, string] {
   return a < b ? [a, b] : [b, a];
+}
+
+function confirmUnfriend(username: string, onConfirm: () => void) {
+  Alert.alert(
+    '친구를 끊을까요?',
+    `@${username} 님과 친구 관계가 끊어져요. 서로의 친구공개 기록이 더 이상 보이지 않아요.`,
+    [
+      { text: '취소', style: 'cancel' },
+      { text: '친구 끊기', style: 'destructive', onPress: onConfirm },
+    ],
+  );
 }
 
 export default function FriendsScreen() {
@@ -69,8 +93,8 @@ export default function FriendsScreen() {
   const [search, setSearch] = useState<SearchState>({ status: 'idle' });
   // 요청 보내기/취소 진행 중 버튼 이중 탭 방지.
   const [actionPending, setActionPending] = useState(false);
-  // 목록에서 수락 처리 중인 상대 id(행 단위 버튼 비활성).
-  const [actingId, setActingId] = useState<string | null>(null);
+  // 목록에서 액션 처리 중인 상대(행 단위 버튼 비활성 + 누른 버튼에만 스피너).
+  const [acting, setActing] = useState<{ id: string; kind: ActingKind } | null>(null);
 
   const [list, setList] = useState<ListState>({ status: 'loading' });
   // 탭을 빠르게 오갈 때 늦게 도착한 응답이 최신 목록을 덮어쓰지 않게 하는 토큰
@@ -160,11 +184,62 @@ export default function FriendsScreen() {
     return 'blocked';
   }
 
+  // 거절(pending 삭제)과 끊기(accepted 삭제)는 대상 status만 다른 같은 DELETE다.
+  // status를 조건에 넣어, 그새 상태가 바뀐 행을 엉뚱하게 지우는 걸 막는다.
+  async function removeFriendship(
+    otherId: string,
+    expected: 'pending' | 'accepted',
+  ): Promise<RemoveOutcome> {
+    if (!myId) return 'error';
+    const [low, high] = sortedPair(myId, otherId);
+
+    const { data, error } = await supabase
+      .from('friendships')
+      .delete()
+      .eq('user_low', low)
+      .eq('user_high', high)
+      .eq('status', expected)
+      .select('user_low');
+
+    if (error) {
+      console.error('친구 관계 삭제 실패:', error);
+      return 'error';
+    }
+    if (data && data.length > 0) return 'removed';
+
+    const relationship = await fetchRelationship(myId, otherId);
+    if (relationship === null) return 'error';
+    if (relationship === 'none') return 'gone';
+    return 'blocked';
+  }
+
+  function removeRowFromList(otherId: string) {
+    setList((prev) =>
+      prev.status === 'ready'
+        ? { status: 'ready', rows: prev.rows.filter((r) => r.id !== otherId) }
+        : prev,
+    );
+  }
+
+  // 낙관적 제거를 되돌릴 때 — 목록은 username 정렬이므로 제자리에 다시 꽂는다.
+  function restoreRowToList(row: MatchedProfile) {
+    setList((prev) =>
+      prev.status === 'ready'
+        ? {
+            status: 'ready',
+            rows: [...prev.rows, row].sort((a, b) => a.username.localeCompare(b.username)),
+          }
+        : prev,
+    );
+  }
+
+  // 수락은 낙관적으로 처리하지 않는다 — 0행(상대가 그새 취소/RLS 차단)일 때
+  // 실제 상태를 재조회해서 갈라야 하므로, 결과를 보고 나서 화면을 바꾼다.
   async function handleAcceptFromList(other: MatchedProfile) {
-    if (actingId) return;
-    setActingId(other.id);
+    if (acting) return;
+    setActing({ id: other.id, kind: 'accept' });
     const outcome = await acceptRequest(other.id);
-    setActingId(null);
+    setActing(null);
 
     if (outcome === 'error' || outcome === 'blocked') {
       Alert.alert('수락하지 못했어요', '다시 시도해주세요.');
@@ -172,11 +247,39 @@ export default function FriendsScreen() {
     }
     // accepted / already-friends / gone 전부 "받은 요청"에서는 빠진다.
     // gone(상대가 그새 취소)은 에러 배너가 아니라 조용한 갱신으로 처리한다.
-    setList((prev) =>
-      prev.status === 'ready'
-        ? { status: 'ready', rows: prev.rows.filter((r) => r.id !== other.id) }
-        : prev,
-    );
+    removeRowFromList(other.id);
+  }
+
+  // 거절은 낙관적 제거 + 실패 시 원복(요청 취소와 같은 정책) — 되돌리려면 상대가
+  // 다시 보내기만 하면 되는 가역적 액션이라 즉시 반영이 안전하다.
+  async function handleRejectFromList(other: MatchedProfile) {
+    if (acting) return;
+    removeRowFromList(other.id);
+
+    const outcome = await removeFriendship(other.id, 'pending');
+    if (outcome === 'error' || outcome === 'blocked') {
+      restoreRowToList(other);
+      Alert.alert('거절하지 못했어요', '다시 시도해주세요.');
+    }
+  }
+
+  function handleUnfriendFromList(other: MatchedProfile) {
+    if (acting) return;
+    // 끊기는 파괴적(재수립에 상대 동의 필요)이라 ① 확인 다이얼로그를 받고
+    // ② 낙관적으로 지우지 않고 성공을 확인한 뒤 화면에서 뺀다. 실패했는데 화면에서
+    // 사라져 있으면 "끊긴 줄 알았는데 아직 친구"라는 최악의 오해가 생기기 때문.
+    // (요청 취소·거절은 가역적이라 확인 없이 낙관적으로 처리 — 위 주석 참고.)
+    confirmUnfriend(other.username, async () => {
+      setActing({ id: other.id, kind: 'unfriend' });
+      const outcome = await removeFriendship(other.id, 'accepted');
+      setActing(null);
+
+      if (outcome === 'error' || outcome === 'blocked') {
+        Alert.alert('친구를 끊지 못했어요', '다시 시도해주세요.');
+        return;
+      }
+      removeRowFromList(other.id);
+    });
   }
 
   async function handleAcceptFromSearch() {
@@ -199,6 +302,43 @@ export default function FriendsScreen() {
     // 검색 UI에 가려져 있는 탭 목록도 최신화 — 검색어를 지우고 돌아왔을 때
     // 방금 수락한 친구가 빠져 있는 걸 막는다(탭 전환이 없어 재조회가 안 걸림).
     void loadList();
+  }
+
+  // 목록 쪽 거절과 같은 정책 — 낙관적 + 실패 시 원복.
+  async function handleRejectFromSearch() {
+    if (search.status !== 'found' || actionPending) return;
+    const { profile } = search;
+
+    setActionPending(true);
+    setSearch({ status: 'found', profile, relationship: 'none' });
+
+    const outcome = await removeFriendship(profile.id, 'pending');
+    setActionPending(false);
+
+    if (outcome === 'error' || outcome === 'blocked') {
+      setSearch({ status: 'found', profile, relationship: 'received' }); // 원복
+      Alert.alert('거절하지 못했어요', '다시 시도해주세요.');
+      return;
+    }
+    void loadList();
+  }
+
+  function handleUnfriendFromSearch() {
+    if (search.status !== 'found' || actionPending) return;
+    const { profile } = search;
+
+    confirmUnfriend(profile.username, async () => {
+      setActionPending(true);
+      const outcome = await removeFriendship(profile.id, 'accepted');
+      setActionPending(false);
+
+      if (outcome === 'error' || outcome === 'blocked') {
+        Alert.alert('친구를 끊지 못했어요', '다시 시도해주세요.');
+        return;
+      }
+      setSearch({ status: 'found', profile, relationship: 'none' });
+      void loadList();
+    });
   }
 
   async function fetchRelationship(me: string, other: string): Promise<RelationshipKind | null> {
@@ -366,6 +506,8 @@ export default function FriendsScreen() {
               onSend={handleSendRequest}
               onCancel={handleCancelRequest}
               onAccept={handleAcceptFromSearch}
+              onReject={handleRejectFromSearch}
+              onUnfriend={handleUnfriendFromSearch}
             />
           )}
         </View>
@@ -419,9 +561,11 @@ export default function FriendsScreen() {
                 <PersonRow
                   profile={item}
                   tab={tab}
-                  acting={actingId === item.id}
-                  disabled={actingId !== null}
+                  actingKind={acting?.id === item.id ? acting.kind : null}
+                  disabled={acting !== null}
                   onAccept={() => handleAcceptFromList(item)}
+                  onReject={() => handleRejectFromList(item)}
+                  onUnfriend={() => handleUnfriendFromList(item)}
                 />
               )}
             />
@@ -435,8 +579,7 @@ export default function FriendsScreen() {
 // 검색으로 찾은 상대 카드 — 관계 상태에 따라 버튼을 분기한다(설계 2단계-B).
 // '요청 보내기'는 relationship이 'none'일 때만 그려지므로, 받은 pending
 // 상태에서 요청을 다시 보내 PK 충돌이 나는 경로 자체가 UI에 없다.
-// 수락은 3A에서 연결됐고, 거절/끊기는 아직 View(비활성)로 자리만 둔다 —
-// 3B에서 Pressable + 핸들러로 교체 예정.
+// 관계 상태별 액션은 목록 행(PersonRow)과 같은 핸들러를 공유한다.
 function ResultCard({
   profile,
   relationship,
@@ -444,6 +587,8 @@ function ResultCard({
   onSend,
   onCancel,
   onAccept,
+  onReject,
+  onUnfriend,
 }: {
   profile: MatchedProfile;
   relationship: RelationshipKind;
@@ -451,6 +596,8 @@ function ResultCard({
   onSend: () => void;
   onCancel: () => void;
   onAccept: () => void;
+  onReject: () => void;
+  onUnfriend: () => void;
 }) {
   return (
     <View style={styles.resultCard}>
@@ -486,15 +633,23 @@ function ResultCard({
           >
             <Text style={styles.actionBtnText}>수락</Text>
           </Pressable>
-          <View style={[styles.actionBtnOutline, styles.placeholderBtn]}>
+          <Pressable
+            style={[styles.actionBtnOutline, actionPending && styles.actionBtnDisabled]}
+            onPress={onReject}
+            disabled={actionPending}
+          >
             <Text style={styles.actionBtnOutlineText}>거절</Text>
-          </View>
+          </Pressable>
         </View>
       )}
       {relationship === 'friends' && (
-        <View style={[styles.actionBtnOutline, styles.placeholderBtn]}>
-          <Text style={styles.actionBtnOutlineText}>친구</Text>
-        </View>
+        <Pressable
+          style={[styles.actionBtnOutline, actionPending && styles.actionBtnDisabled]}
+          onPress={onUnfriend}
+          disabled={actionPending}
+        >
+          <Text style={styles.actionBtnOutlineText}>친구 끊기</Text>
+        </Pressable>
       )}
     </View>
   );
@@ -505,15 +660,21 @@ function ResultCard({
 function PersonRow({
   profile,
   tab,
-  acting,
+  actingKind,
   disabled,
   onAccept,
+  onReject,
+  onUnfriend,
 }: {
   profile: MatchedProfile;
   tab: Tab;
-  acting: boolean;
+  // 이 행에서 진행 중인 액션(스피너 표시용). 다른 행이 진행 중이면 null이지만
+  // disabled는 true다 — 동시에 두 액션이 나가지 않게.
+  actingKind: ActingKind | null;
   disabled: boolean;
   onAccept: () => void;
+  onReject: () => void;
+  onUnfriend: () => void;
 }) {
   return (
     <View style={styles.resultCard}>
@@ -529,20 +690,32 @@ function PersonRow({
             onPress={onAccept}
             disabled={disabled}
           >
-            {acting ? (
+            {actingKind === 'accept' ? (
               <ActivityIndicator size="small" color="#fff" />
             ) : (
               <Text style={styles.actionBtnText}>수락</Text>
             )}
           </Pressable>
-          <View style={[styles.actionBtnOutline, styles.placeholderBtn]}>
+          <Pressable
+            style={[styles.actionBtnOutline, disabled && styles.actionBtnDisabled]}
+            onPress={onReject}
+            disabled={disabled}
+          >
             <Text style={styles.actionBtnOutlineText}>거절</Text>
-          </View>
+          </Pressable>
         </View>
       ) : (
-        <View style={[styles.actionBtnOutline, styles.placeholderBtn]}>
-          <Text style={styles.actionBtnOutlineText}>친구 끊기</Text>
-        </View>
+        <Pressable
+          style={[styles.actionBtnOutline, disabled && styles.actionBtnDisabled]}
+          onPress={onUnfriend}
+          disabled={disabled}
+        >
+          {actingKind === 'unfriend' ? (
+            <ActivityIndicator size="small" color={theme.colors.accent} />
+          ) : (
+            <Text style={styles.actionBtnOutlineText}>친구 끊기</Text>
+          )}
+        </Pressable>
       )}
     </View>
   );
@@ -722,10 +895,6 @@ const styles = StyleSheet.create({
   },
   actionBtnDisabled: {
     opacity: 0.5,
-  },
-  // 수락/거절/친구 — 이번 단계는 핸들러가 없는 자리만(3단계에서 교체).
-  placeholderBtn: {
-    opacity: 0.4,
   },
   receivedBtns: {
     flexDirection: 'row',
