@@ -120,41 +120,46 @@ export default function ProfileScreen() {
       });
   }, [session]);
 
-  // 통계 3개 — count만 가볍게 조회(head: true). friends는 지금 항상 0
-  // (v1.1 친구 기능 붙으면 자동으로 채워짐).
-  useEffect(() => {
-    if (!userId) return;
+  // 통계 3개 — count만 가볍게 조회(head: true), 행 데이터는 안 가져온다.
+  // 포커스마다 재조회(위 뱃지 count와 동일 패턴) — 마운트 1회로 두면 탭이 계속
+  // 살아있어서 친구 수락/끊기나 글 작성/삭제 후 숫자가 영영 안 맞는다.
+  useFocusEffect(
+    useCallback(() => {
+      if (!userId) return;
 
-    (async () => {
-      const [countriesRes, postsRes, friendsRes] = await Promise.all([
-        supabase
-          .from("country_visits")
-          .select("id", { count: "exact", head: true })
-          .eq("user_id", userId),
-        supabase
-          .from("posts")
-          .select("id", { count: "exact", head: true })
-          .eq("user_id", userId),
-        supabase
-          .from("friendships")
-          .select("user_low", { count: "exact", head: true })
-          .eq("status", "accepted")
-          .or(`user_low.eq.${userId},user_high.eq.${userId}`),
-      ]);
+      (async () => {
+        const [countriesRes, postsRes, friendsRes] = await Promise.all([
+          supabase
+            .from("country_visits")
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", userId),
+          supabase
+            .from("posts")
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", userId),
+          supabase
+            .from("friendships")
+            .select("user_low", { count: "exact", head: true })
+            .eq("status", "accepted")
+            .or(`user_low.eq.${userId},user_high.eq.${userId}`),
+        ]);
 
-      if (countriesRes.error)
-        console.error("나라 수 조회 실패:", countriesRes.error);
-      if (postsRes.error) console.error("기록 수 조회 실패:", postsRes.error);
-      if (friendsRes.error)
-        console.error("친구 수 조회 실패:", friendsRes.error);
+        if (countriesRes.error)
+          console.error("나라 수 조회 실패:", countriesRes.error);
+        if (postsRes.error) console.error("기록 수 조회 실패:", postsRes.error);
+        if (friendsRes.error)
+          console.error("친구 수 조회 실패:", friendsRes.error);
 
-      setStats({
-        countries: countriesRes.count ?? 0,
-        posts: postsRes.count ?? 0,
-        friends: friendsRes.count ?? 0,
-      });
-    })();
-  }, [userId]);
+        // 포커스마다 도는 조회라 실패 시 0으로 덮으면 숫자가 튄다(오프라인에서
+        // 탭만 왕복해도 0이 됨) — 실패한 항목만 직전 값을 유지한다.
+        setStats((prev) => ({
+          countries: countriesRes.error ? prev.countries : (countriesRes.count ?? 0),
+          posts: postsRes.error ? prev.posts : (postsRes.count ?? 0),
+          friends: friendsRes.error ? prev.friends : (friendsRes.count ?? 0),
+        }));
+      })();
+    }, [userId]),
+  );
 
   // 나라 필터 칩 목록 — 내가 기록을 올린 나라만 (my_post_countries RPC)
   useEffect(() => {
