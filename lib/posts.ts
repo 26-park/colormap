@@ -9,13 +9,11 @@ export const VISIBILITY_LABELS: Record<PostVisibility, string> = {
   private: '비공개',
 };
 
-// friends는 친구 기능이 없는 지금 사실상 "나만 보임"과 동일한 효과라 hidden으로
-// 새 선택을 막는다 — 단, 이미 friends로 저장된 기존 글을 편집할 때는 그 값이
-// 사라진 척하지 않도록 렌더링 쪽에서 "현재 선택값이면 예외적으로 보여준다".
-// 친구 기능 출시 시 이 hidden만 지우면 compose/게시물 편집 둘 다 자동으로 열림.
-export const VISIBILITY_OPTIONS: { value: PostVisibility; hidden?: boolean }[] = [
+// compose(작성)와 게시물 편집이 공유하는 공개범위 세그먼트 순서.
+// 친구 기능이 완성돼 세 옵션 모두 노출한다(과거엔 friends를 hidden으로 막았음).
+export const VISIBILITY_OPTIONS: { value: PostVisibility }[] = [
   { value: 'public' },
-  { value: 'friends', hidden: true },
+  { value: 'friends' },
   { value: 'private' },
 ];
 
