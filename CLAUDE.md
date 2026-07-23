@@ -45,12 +45,10 @@
 - 환경 셋업 완료: Expo 프로젝트 생성됨, GitHub 연결됨. dev build(`npx expo run:android`) 필요 — Expo Go로는 지도/카메라/위치 등 네이티브 모듈이 안 뜸.
 - **디자인 단계 완료**: 디자인 토큰·네비게이션·화면별 사양 확정 → docs/PRD.md 6~8장에 반영.
 - **🎉 P2 전체 완료 (2026-07-20)**: 에러 처리 체계화(Phase J) / Pretendard 폰트(Phase K) / 공개범위 묶음(Phase L) / 의존성 정리(Phase M) 4개 전부 끝났다. P0/P1/P2 다 완료.
+- **🎉 친구 기능(Phase O) 전체 완료 (2026-07-22)**: 1~5단계 전부 끝났다. 상세는 아래 Phase O 참고.
 - **⭐ 다음 세션 시작점**: 아래 로드맵 순서대로 (배경은 바로 아래 "⭐ 출시 시점 방향 결정" 참고).
-  1. **친구 기능 UI — 진행 중 (Phase O, 2/5단계 완료)**: RLS/DB 기반은 Phase N에서 완료. 구현은 5단계 분할(화면 뼈대→검색+요청→수락/거절/끊기→뱃지 실시간→친구공개 칩 hidden 해제), 단계마다 2계정 검증 통과 후 커밋 — 상세는 아래 Phase O 참고.
-     - ✅ 1단계(`aaf97bc`): 화면 뼈대 + 프로필 진입점/pending 뱃지
-     - ✅ 2단계(`c60e917`): 검색 + 요청 보내기/취소
-     - ⭐ **다음 세션은 3단계부터**: 수락/거절/끊기 연결 (검증은 수락부터 하고 끊기로 마무리할 것)
-  2. 좋아요
+  1. ✅ **친구 기능 UI — 완료 (Phase O)**
+  2. ⭐ **다음: 좋아요** — `post_likes` 테이블·RLS는 이미 존재(스키마 참고). 가시성 조건을 새로 쓰게 되면 반드시 `can_view_post` 재사용(아래 "권한/가시성 모델" 참고).
   3. 댓글
   4. 장소검색(지오코딩) / 3D 지구본 토글
   5. **출시 준비**: 구글 플레이 콘솔 개발자 등록($25) + AAB 빌드(EAS, `preview` 프로필은 APK라 별도 프로필 필요) + 스토어 등록 자료(스크린샷, 설명, 개인정보처리방침 URL) 준비
@@ -116,14 +114,22 @@
     - **`can_view_post(p posts, viewer uuid)` 함수 신설**: 기존 `posts_select_visible`의 조건을 문자 그대로 옮긴 것(케이스별 대조표로 동치 확인, 로직 변경 없음). `posts_select_visible`과 `country_visits_select_visible`이 이제 이 함수 하나를 공유 — 두 곳에 조건을 복붙하면 나중에 어긋날 위험을 원천 차단. `security invoker`(내부에서 참조하는 `profiles_select_all`이 이미 `using (true)`라 정의자 권한 불필요, `are_friends()`는 자체적으로 `security definer`).
     - **friendships RLS 구멍 2건 추가 발견 및 보강** (⛔ 작업과 무관하게 조사 중 발견): ① INSERT에 `status` 제약이 없어 `'accepted'`를 직접 넣어 상대 동의 없이 "이미 수락된" 관계를 혼자 만들 수 있었음 → `status='pending'`일 때만 INSERT 허용으로 수정. ② UPDATE가 당사자면 누구나 가능이라 요청자 본인이 자기 요청을 스스로 accepted로 바꿀 수 있었음 → USING에 "요청받은 쪽(비요청자)만 + 현재 pending"을, WITH CHECK에 "결과가 accepted"를 걸어 가능한 전환을 pending→accepted 하나로 제한(accepted 이후엔 UPDATE 자체가 안 되고 DELETE만). RLS만으론 "이전 행과 identical해야 함"을 표현할 수 없어서, UPDATE 시 `user_low`/`user_high`/`requested_by`/`created_at` 변조를 막는 `friendships_lock_identity` 트리거를 추가로 둠(G-1과 같은 "RLS로 못 거는 불변식은 트리거로" 패턴).
     - **검증 방법론**: `supabase db query`가 멀티스테이트먼트 스크립트에서 마지막 statement 결과만 돌려주는 걸 발견 → 각 시나리오 결과를 temp table에 적재했다가 마지막에 한 번에 조회하는 방식으로 우회(`scripts/verify-friends-rls.sql`, 롤백 트랜잭션 + `set local role authenticated` + `request.jwt.claims`로 특정 유저 흉내). INSERT 위반은 예외(`insufficient_privilege`)로, UPDATE의 USING 위반은 예외 없이 조용한 0행으로 끝난다는 차이를 발견해 판정 로직을 분리(전자는 예외 캐치, 후자는 `GET DIAGNOSTICS`로 영향 행 수 확인). 리허설(전체 rollback) → 실제 적용(`db push`) → 같은 스크립트로 라이브 재검증까지 2회 실행, 18개 시나리오(비공개/공개/본인 조회, friendships INSERT/UPDATE 구멍 차단, 수락 흐름, posts 가시성 매트릭스 3×3, `posts_country_idx` 사용 확인) 전부 통과 확인. 앱 쪽은 코드 변경이 없어 재빌드 없이 스모크(지도/나라상세/프로필/게시물상세)만 확인, 이상 없음.
-  - Phase O: **친구 기능 UI — 진행 중 (2/5단계 완료)**. 5단계 분할(화면 뼈대→검색+요청→수락/거절/끊기→뱃지 실시간→친구공개 칩 hidden 해제)로 진행, 단계마다 2계정 검증 통과 후 커밋 — 한 커밋에 여러 단계를 뭉치지 않는 원칙(문제 생겼을 때 되돌릴 단위 확보).
+  - Phase O: **🎉 친구 기능 UI — 전체 완료 (2026-07-22)**. 5단계 분할(화면 뼈대→검색+요청→수락/거절/끊기→통계 갱신→친구공개 칩 hidden 해제)로 진행, 단계마다 2계정 검증 통과 후 커밋 — 한 커밋에 여러 단계를 뭉치지 않는 원칙(문제 생겼을 때 되돌릴 단위 확보). 커밋: 1단계 `aaf97bc` / 2단계 `c60e917` / 3A `521cbb9` / 3B `f654d2c` / 4단계 `6ad2b35` / 5단계 `a633f78`.
+    - **상태머신 (검색·목록 공용)**: 나와 상대 사이 관계를 `sortedPair(me, other)`(JS 문자열 `<` 비교, Postgres `least/greatest`·`are_friends()`와 동치)로 만든 `user_low`/`user_high`로 **단건 조회**해 `none`/`sent`(requested_by=me)/`received`(requested_by≠me)/`friends`(accepted) 4개로 분기. "요청 보내기"는 `none`일 때만 렌더돼 받은 pending에 재요청해 PK 충돌 나는 경로가 UI에 없음.
+    - **⭐ 0행 자기교정 (이 기능의 핵심 방어)**: 수락/거절/끊기는 모두 `friendships`를 UPDATE/DELETE하는데, **RLS USING 위반은 에러가 아니라 "0행"으로 조용히 끝난다**(Phase N 검증 시나리오 7에서 확인). 그래서 `.update()/.delete()`에 항상 `.select()`를 붙여 영향 행 수를 확인하고, **0행이면 성공으로 취급하지 않고** 그 관계만 재조회해 실제 상태로 분기한다 — 상대가 그새 취소/끊음(관계 없음)이면 "조용히 목록에서 제거"(에러 배너 아님), 여전히 pending인데 막힌 경우(요청자 셀프수락 등)만 Alert. 목록에 stale 행이 남아 있어도 누르는 순간 이 경로가 실제 상태로 정리하므로 realtime 구독이 불필요(4단계 조사 결론).
+    - **낙관적 vs 확인후 구분 (2026-07-22 확정)**: **가역적 액션(요청 취소·거절)** = 낙관적 제거 + 실패 시 원복(상대가 다시 보내면 그만이라 확인 다이얼로그 없음). **파괴적 액션(친구 끊기)** = ① 확인 다이얼로그 + ② 낙관적으로 지우지 않고 성공을 확인한 뒤 화면에서 제거(재수립에 상대 동의가 필요하고, 실패했는데 화면에서 사라져 있으면 "끊긴 줄 알았는데 아직 친구"라는 최악의 오해가 생김). 수락도 0행 재조회가 필요해 낙관적으로 처리하지 않음.
+    - **거절·끊기 DELETE 통합**: `removeFriendship(otherId, expected)` — 대상 `status`(pending=거절/accepted=끊기)만 다른 같은 DELETE. `.eq('status', expected)`로 그새 상태가 바뀐 행을 엉뚱하게 지우는 걸 막는다.
+    - **목록 로딩**: 두 탭(친구=accepted / 받은 요청=pending+requested_by≠me) 공용 `loadList`, `friendships` 조회 후 상대 프로필은 `profiles.in('id', otherIds)` **2차 쿼리로 병합**(user_low/high 어느 쪽이 상대인지가 행마다 달라 FK 조인이 안 맞음). `useFocusEffect` + `tab` 의존으로 포커스·탭 전환마다 재조회(Phase I 패턴), `listRequestIdRef`로 늦은 응답 무시. 실패=ErrorView+재시도, 빈 배열=빈 상태(에러 아님). 검색 결과 카드에서 액션하면 가려진 탭 목록도 `void loadList()`로 최신화.
+    - **4단계(통계 포커스 갱신)**: 프로필 통계 3개(나라/기록/친구)를 `useEffect[userId]`→`useFocusEffect`로 이전(뱃지 pending count와 동일 패턴). 마운트 1회로 두면 탭이 계속 살아있어 친구 수락/끊기·글 작성/삭제 후 숫자가 앱 재시작 전까지 안 맞던 갭 해소 — 덤으로 "글 쓰고 프로필 돌아오면 기록 수 안 늘던" 기존 갭도 같이 해소. 포커스마다 도는 조회라 **실패 시 0으로 덮으면 오프라인 탭 왕복 시 숫자가 튀므로** 실패한 항목만 직전 값 유지(`setStats(prev => ...)`). realtime은 넣지 않기로 판단(위 0행 자기교정 + 포커스 재조회로 충분, 이 규모엔 과설계).
+    - **5단계(친구공개 활성화)**: `VISIBILITY_OPTIONS`의 friends 항목 `hidden: true` 제거(공용 소스 한 곳 → compose·게시물 편집 양쪽 자동 3칩). hidden이 사라지며 무의미해진 `VisibilitySelector`의 필터(`!opt.hidden || opt.value === value`)와 타입의 `hidden?: boolean` 필드도 죽은 코드로 제거.
+    - **이하 초기 2단계 상세(1·2단계, 착수 시점 기록 보존)**:
     - **1단계 완료(`aaf97bc`)**: `app/friends.tsx` 신설(최상위 라우트 — `app/_layout.tsx`의 `Stack.Screen`에 명시 등록 안 해도 `settings.tsx`/`post/[id].tsx`처럼 파일 기반 라우팅으로 자동 동작 확인됨). 헤더(뒤로가기+타이틀)+검색바(뼈대만)+세그먼트(친구/받은 요청)+탭별 빈 상태. 프로필 탭의 빈 `headerSpacer`를 👥 진입 버튼으로 교체, 받은 pending 요청 수를 **count 전용 쿼리**(`head: true`, 행 데이터 없음)로 조회해 dot 뱃지 — `useFocusEffect`(country/[cc].tsx와 동일 패턴)로 매 포커스마다 재조회해 친구 화면 다녀온 뒤 즉시 갱신됨.
     - **2단계 완료(`c60e917`)**: username 검색은 **정확 일치로 확정**(`pg_trgm`/검색 RPC 없이 `profiles.eq('username', q).neq('id', me)`만으로 충분 — citext라 대소문자 무시는 자동, `profiles_select_all` RLS가 `using (true)`라 추가 인프라 불필요). 검색바 placeholder+캡션에 "정확한 아이디로만 검색"을 항상 노출해 부분검색 기대와의 충돌을 방지.
       - **상태머신**: 매치된 상대와 나 사이 `friendships` 행을 `sortedPair(me, other)`(JS 문자열 `<` 비교 — 표준 소문자 정형 uuid 문자열이라 Postgres `least/greatest`와 동치, 초기 스키마의 `are_friends()`와 같은 규칙)로 만든 `user_low`/`user_high`로 **단건 조회**해 `none`/`sent`(`requested_by=me`)/`received`(`requested_by≠me`)/`friends`(`accepted`) 4개로 분기. "요청 보내기" 버튼은 `none`일 때만 렌더돼 **받은 pending에 재요청해 PK 충돌 나는 경로가 UI 구조상 존재하지 않음**(양방향 검색 대칭 검증 완료 — A가 보낸 요청을 B가 검색하면 B 화면엔 요청 보내기가 아니라 수락/거절이 뜸).
       - INSERT(요청 보내기)/DELETE(취소) 모두 **낙관적 업데이트 + 실패 시 원복**(Phase L과 동일 패턴). INSERT의 `23505`(unique_violation, 동시 양방향 요청 레이스)는 에러 배너 대신 관계를 재조회해 실제 상태로 갱신 — 코드 레벨 보장이라 타이밍 재현이 어려워 수동 시나리오 대신 리뷰로 확인.
-      - 수락/거절/끊기는 `View`(비활성, opacity 0.4)로 자리만 두고 3단계에서 `Pressable`+핸들러로 교체 예정.
-      - 검증(2계정, 10개 시나리오 전부 통과): 정확/대소문자무시 매치, 본인 제외, 미매치 빈 상태(에러 아님), 요청 보내기→요청됨 전환+DB 확인, 탭 왕복 후에도 DB 기반으로 상태 유지, 취소→원복, **취소 직후 상대방 뱃지 dot 즉시 소멸(철회 양방향 반영)**, **양방향 검색 대칭(수락/거절 노출, 요청 보내기 노출 안 됨)**, 네트워크 끊고 검색 시 ErrorView.
-    - **남은 단계**: 3(수락/거절/끊기 연결) → 4(뱃지 실시간 — 1단계에서 이미 `useFocusEffect`로 구현했으므로 3단계에서 수락/거절 액션이 실제 행을 바꾸는지만 확인하면 자연히 충족될 가능성 높음, 별도 작업 필요 여부는 3단계 완료 후 재확인) → 5(`lib/posts.ts`의 `VISIBILITY_OPTIONS`에서 `friends` 옵션 `hidden: true` 제거, 이 마일스톤의 마지막 커밋).
+      - (당시) 수락/거절/끊기는 자리만 두고 3단계에서 연결 예정이었음 — 위 3A/3B에서 완료.
+- **알려진 갭 (백로그, 별도 작업 — Phase O 4단계 조사에서 발견)**:
+  - **프로필 그리드 1페이지 / 나라 필터 칩 / filteredCount가 마운트 1회라 stale**: 글 작성·삭제 후 프로필로 돌아와도 그리드·칩·"내 기록 N"이 갱신되지 않는다(탭이 계속 마운트된 채라 앱 재시작 전엔 안 맞음). 통계 3개는 4단계에서 `useFocusEffect`로 옮겨 해소했지만, 그리드는 페이지네이션 상태(`page`/`hasMore`/`requestIdRef`) 리셋이 얽혀 있어 손이 더 간다. **친구 기능과 무관한 기존 갭** — 별도 작업으로 다룰 것.
 - **무해 판정 경고 (조치 안 함, 이유 기록 — Phase M 조사에서 발견)**:
   - `npm audit` 2건 — ① `postcss <8.5.10`(CSS Stringify XSS) ② `uuid <11.1.1`(v3/v5/v6 buffer bounds). 둘 다 `@expo/metro-config`/`@expo/config-plugins`/`xcode` 등 **Expo CLI 빌드 툴체인의 전이 의존성**이라 로컬 PC에서 `expo start`/`prebuild`할 때만 관여하고 **출시된 앱 런타임(사용자 기기)엔 포함되지 않음**. `npm audit fix --force`가 제시하는 유일한 수정 경로가 `expo@57.0.7` 메이저 업그레이드뿐이라 지금은 조치 불필요 — 위 "출시 후 TODO"의 SDK 업그레이드 때 자연히 같이 해결됨.
   - ⭐ **헷갈리지 말 것**: 위 audit의 `uuid`는 npm 레지스트리의 **`uuid` 패키지**(node_modules 안, xcode가 물고 있는 것)이고, 이번에 `expo-crypto`로 교체한 건 `expo-modules-core`가 export하던 **`uuid` 유틸(패키지 아님, JS API)**이다 — 이름만 같은 완전히 별개의 것. compose.tsx 쪽은 이미 교체 완료, audit의 `uuid` 패키지는 위 항목대로 SDK 업그레이드 때 처리.
@@ -168,7 +174,7 @@
 ### v1.1 (범위 정의는 유효, 착수 시점은 "⭐ 출시 시점 방향 결정" 로드맵 참고 — 전부 "아직 만들지 말 것"은 아님)
 
 - ⚠️ **출시 전 순차 착수 (로드맵에 포함)**: 친구(상호 수락) → 좋아요 → 댓글 → 장소검색(지오코딩)/3D 지구본 토글. 순서·배경은 "현재 단계"의 "⭐ 출시 시점 방향 결정" 참고.
-  - 친구 기능이 붙기 전까지 compose·게시물 편집의 '친구공개' 옵션은 `lib/posts.ts`의 `VISIBILITY_OPTIONS`에서 `hidden: true`로 숨겨져 있다(친구가 없어 사실상 "나만 보임"과 같은 효과라서) — 친구 기능 착수 시 이 `hidden`만 지우면 두 화면 다 자동으로 열림.
+  - ✅ 친구(상호 수락) — **완료(Phase O, 2026-07-22)**. compose·게시물 편집의 '친구공개' 옵션도 활성화됨(과거 `VISIBILITY_OPTIONS`의 `hidden: true`는 Phase O 5단계에서 제거).
 - **여전히 출시 이후 (착수 보류)**: 같은 나라 내 시간순 루트 선 · 사진 위치 필터 토글(EXIF 기반 핀 근방 사진 추천) · 첨부 사진 순서 재정렬(order_index) · 신고/차단 · 푸시 알림 · **남의 프로필 보기(그 사람 색칠 세계지도 포함)** · **프로필 게시물 나라별/날짜별 필터 뷰**(`country_code`·`created_at` 이미 있어 데이터는 준비됨 — 필터 UI만 별도 단계로 예정, 도시별 그룹핑은 없음)
 
 ### v1.2 (아직 만들지 말 것)
