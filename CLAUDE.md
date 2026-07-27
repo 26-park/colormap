@@ -46,10 +46,11 @@
 - **디자인 단계 완료**: 디자인 토큰·네비게이션·화면별 사양 확정 → docs/PRD.md 6~8장에 반영.
 - **🎉 P2 전체 완료 (2026-07-20)**: 에러 처리 체계화(Phase J) / Pretendard 폰트(Phase K) / 공개범위 묶음(Phase L) / 의존성 정리(Phase M) 4개 전부 끝났다. P0/P1/P2 다 완료.
 - **🎉 친구 기능(Phase O) 전체 완료 (2026-07-22)**: 1~5단계 전부 끝났다. 상세는 아래 Phase O 참고.
+- **🎉 좋아요(Phase P) 전체 완료 (2026-07-27)**: 게시물 상세 하트+개수. 상세는 아래 Phase P 참고.
 - **⭐ 다음 세션 시작점**: 아래 로드맵 순서대로 (배경은 바로 아래 "⭐ 출시 시점 방향 결정" 참고).
   1. ✅ **친구 기능 UI — 완료 (Phase O)**
-  2. ⭐ **다음: 좋아요** — `post_likes` 테이블·RLS는 이미 존재(스키마 참고). 가시성 조건을 새로 쓰게 되면 반드시 `can_view_post` 재사용(아래 "권한/가시성 모델" 참고).
-  3. 댓글
+  2. ✅ **좋아요 — 완료 (Phase P)**
+  3. ⭐ **다음: 댓글** — `comments` 테이블·RLS 이미 존재(대댓글 `parent_comment_id` 포함). 가시성은 `comments_select_if_post_visible`가 좋아요와 같은 방식으로 posts RLS(=can_view_post)에 얹혀감 — 새로 가시성 조건을 쓰게 되면 반드시 `can_view_post` 재사용(아래 "권한/가시성 모델").
   4. 장소검색(지오코딩) / 3D 지구본 토글
   5. **출시 준비**: 구글 플레이 콘솔 개발자 등록($25) + AAB 빌드(EAS, `preview` 프로필은 APK라 별도 프로필 필요) + 스토어 등록 자료(스크린샷, 설명, 개인정보처리방침 URL) 준비
   - 착수 전 반드시 확인: "중요 결정·원칙" — 소셜 로그인은 이메일+구글만(카카오/네이버/애플 v1 제외), SDK 54→56 업그레이드는 출시 후, `fontWeight` 금지(`fontFamily: theme.fonts.*`만), 나라 색칠 생성/삭제는 DB 트리거 전담(앱은 색만 UPDATE).
@@ -128,6 +129,13 @@
       - **상태머신**: 매치된 상대와 나 사이 `friendships` 행을 `sortedPair(me, other)`(JS 문자열 `<` 비교 — 표준 소문자 정형 uuid 문자열이라 Postgres `least/greatest`와 동치, 초기 스키마의 `are_friends()`와 같은 규칙)로 만든 `user_low`/`user_high`로 **단건 조회**해 `none`/`sent`(`requested_by=me`)/`received`(`requested_by≠me`)/`friends`(`accepted`) 4개로 분기. "요청 보내기" 버튼은 `none`일 때만 렌더돼 **받은 pending에 재요청해 PK 충돌 나는 경로가 UI 구조상 존재하지 않음**(양방향 검색 대칭 검증 완료 — A가 보낸 요청을 B가 검색하면 B 화면엔 요청 보내기가 아니라 수락/거절이 뜸).
       - INSERT(요청 보내기)/DELETE(취소) 모두 **낙관적 업데이트 + 실패 시 원복**(Phase L과 동일 패턴). INSERT의 `23505`(unique_violation, 동시 양방향 요청 레이스)는 에러 배너 대신 관계를 재조회해 실제 상태로 갱신 — 코드 레벨 보장이라 타이밍 재현이 어려워 수동 시나리오 대신 리뷰로 확인.
       - (당시) 수락/거절/끊기는 자리만 두고 3단계에서 연결 예정이었음 — 위 3A/3B에서 완료.
+  - Phase P: **🎉 좋아요 전체 완료 (2026-07-27)**. 게시물 상세에만 하트+개수. 2단계(데이터 계층 → 상세 UI)로 진행. 커밋: P-1 `d95d177` / P-2 `78a8afd`.
+    - **RLS는 손대지 않음 (마이그레이션 0)**: 초기 스키마의 `post_likes_select_if_post_visible`/`post_likes_insert_self`가 `exists (select 1 from posts where posts.id = ...)`로 **posts 테이블 자체의 RLS(=`can_view_post`)에 얹혀간다** — "볼 수 없는 글의 좋아요는 조회·삽입 불가"가 DB에서 이미 강제됨. 이걸 이론이 아니라 **롤백 트랜잭션 6시나리오로 라이브 실증**(비공개/공개/친구공개 × SELECT/INSERT + 내 것만 DELETE): 비친구는 비공개·친구공개 글의 좋아요를 조회(0)·삽입(차단) 둘 다 막히고, 친구·공개는 허용, B가 A의 좋아요를 DELETE하면 0행. `scripts/verify-likes-rls.sql`로 박제(친구 하네스 패턴 재사용 — temp table + role/jwt.claims 스위칭). CLAUDE.md 규칙("가시성 조건을 **직접 다시 쓰는 새 정책**이 필요해지면 `can_view_post` 호출")은 새 정책을 안 써서 발동 안 함 — 검증된 `exists(posts…)` 형태 유지.
+    - **카운트: count-on-read, 트리거·비정규화 컬럼 없음 (확정)**. 판단 기준 = "좋아요가 표시되는 화면이 한 번에 그리는 게시물 수". 좋아요 수를 **게시물 상세(글 1개)에서만** 보여주므로 매 조회 `count(*)`(복합 PK `(post_id,user_id)` 인덱스 히트) 한 번이면 충분 — G-1 스타일 카운터 트리거는 과설계. **그리드엔 개수 안 얹음**(인스타 그리드와 동일, 그리드/페이지네이션 코드 무변경). 좋아요한 사람 목록도 v1 제외(남의 프로필 보기가 v1.1이라 탭해도 갈 곳 없음).
+    - **⭐ 백로그 — 카운트 승급 조건**: 나중에 탐색 피드(v1.2)나 그리드에 좋아요 수를 얹게 되면 그때 `posts.like_count` + G-1 스타일 카운터 트리거로 전환. **지금은 count-on-read.**
+    - **`lib/likes.ts`**: `getLikeState(postId, userId)→{count, likedByMe}` (count는 `head:true count:'exact'`, likedByMe는 PK 점조회, **조회 에러는 throw**해서 호출부가 ErrorView 처리 — 조용한 실패 금지) / `setLike(postId, userId, liked)` **멱등** (liked면 INSERT·`23505`(PK 중복=이미 좋아요) 흡수 / unliked면 DELETE·0행=이미 없음 흡수, **진짜 에러만 throw** — 친구 기능 자기교정 패턴 재사용).
+    - **`app/post/[id].tsx` 하트 UI**: 캐러셀 바로 아래 ♡/♥(active=빨강 `#ff3b30`)+개수, `getLikeState`를 기존 상세 조회에 병합(실패 시 전체 ErrorView+재시도). **낙관적 토글 + 400ms 디바운스 최종상태 쓰기**: 탭 즉시 반영 → 디바운스로 최종상태만 1회 씀. 표시 개수 = `serverCount + (pending≠server면 ±1)`로 항상 파생값 → 원복이 깔끔. 연타는 flush의 `while`로 최종상태 수렴(setLike 멱등이라 안전), 진짜 에러만 서버값 원복+Alert. **⚠️ 언마운트 cleanup에서 pending write 즉시 flush** — 타이머 대기 중(400ms 안) 뒤로가기하면 쓰기가 유실돼 "하트 눌렀는데 재진입 시 빈 하트"가 되는 걸 막음. 떠난 화면이라 flush 실패는 조용히(원복 대상 없음, 다음 진입 시 서버값이 진실). 순수 JS(supabase-js+state)라 새 네이티브 모듈 없음 — 핫리로드로 검증.
+    - 검증: tsc 클린(기존 delete-account Deno 에러 제외), verify 스크립트 6시나리오 롤백 통과. 에뮬 2계정: 기본 토글/연타 최종상태 수렴/flush 유지(하트 누르고 즉시 뒤로가기 후 재진입 유지)/2계정 가시성/본인 글 좋아요/실패 원복 전부 통과. ⚠️ 2계정 가시성 테스트 시 주의: gp123 계정이 **private**이라 전체공개 글도 비친구에겐 안 보임(정상) — 크로스계정 UI 검증하려면 계정을 public으로 바꾸거나 친구를 맺어야 함.
 - **알려진 갭 (백로그, 별도 작업 — Phase O 4단계 조사에서 발견)**:
   - **프로필 그리드 1페이지 / 나라 필터 칩 / filteredCount가 마운트 1회라 stale**: 글 작성·삭제 후 프로필로 돌아와도 그리드·칩·"내 기록 N"이 갱신되지 않는다(탭이 계속 마운트된 채라 앱 재시작 전엔 안 맞음). 통계 3개는 4단계에서 `useFocusEffect`로 옮겨 해소했지만, 그리드는 페이지네이션 상태(`page`/`hasMore`/`requestIdRef`) 리셋이 얽혀 있어 손이 더 간다. **친구 기능과 무관한 기존 갭** — 별도 작업으로 다룰 것.
 - **무해 판정 경고 (조치 안 함, 이유 기록 — Phase M 조사에서 발견)**:
@@ -175,6 +183,7 @@
 
 - ⚠️ **출시 전 순차 착수 (로드맵에 포함)**: 친구(상호 수락) → 좋아요 → 댓글 → 장소검색(지오코딩)/3D 지구본 토글. 순서·배경은 "현재 단계"의 "⭐ 출시 시점 방향 결정" 참고.
   - ✅ 친구(상호 수락) — **완료(Phase O, 2026-07-22)**. compose·게시물 편집의 '친구공개' 옵션도 활성화됨(과거 `VISIBILITY_OPTIONS`의 `hidden: true`는 Phase O 5단계에서 제거).
+  - ✅ 좋아요 — **완료(Phase P, 2026-07-27)**. 게시물 상세 하트+개수, count-on-read. 상세는 "현재 단계"의 Phase P 참고.
 - **여전히 출시 이후 (착수 보류)**: 같은 나라 내 시간순 루트 선 · 사진 위치 필터 토글(EXIF 기반 핀 근방 사진 추천) · 첨부 사진 순서 재정렬(order_index) · 신고/차단 · 푸시 알림 · **남의 프로필 보기(그 사람 색칠 세계지도 포함)** · **프로필 게시물 나라별/날짜별 필터 뷰**(`country_code`·`created_at` 이미 있어 데이터는 준비됨 — 필터 UI만 별도 단계로 예정, 도시별 그룹핑은 없음)
 
 ### v1.2 (아직 만들지 말 것)
@@ -203,7 +212,7 @@
 - **탐색 피드** = (A public AND P public) ∪ (A가 내 친구 AND P가 public 또는 friends)
 - ⚠️ 이 권한은 **클라이언트가 아니라 Supabase RLS(DB)로 강제**한다. 클라이언트 필터만으로 막지 말 것.
 - ✅ ~~⛔ 친구 기능 선행 조건~~ **해소 완료 (2026-07-20, Phase N)** — `country_visits_select_visible`을 "뷰어가 볼 수 있는 게시물이 그 나라에 하나라도 있어야" 노출하도록 재작성함(마이그레이션 `20260720100000_friend_kickoff_rls_hardening.sql`). 해소 근거: 리허설(rollback) + 라이브 적용 후 재검증 둘 다 시나리오 1(비공개 글만 있는 나라 → 타인에게 country_visits 0행, 수정 전이었다면 1이 나왔을 자리) 포함 18개 시나리오 전부 통과.
-- ⭐ **가시성 판정 단일 소스 (2026-07-20 확정)**: 게시물 가시성 판정은 반드시 `can_view_post(p posts, viewer uuid)` 함수를 경유할 것 — **조건을 다른 정책에 복붙 금지**. 지금 `posts_select_visible`과 `country_visits_select_visible`이 이 함수 하나를 공유한다. **좋아요·댓글 RLS를 만들 때도 이 함수를 재사용할 것** — 지금 있는 `post_likes_select_if_post_visible`/`comments_select_if_post_visible`는 `exists (select 1 from posts where posts.id = ...)`로 posts 테이블 자체의 RLS(=can_view_post)에 암묵적으로 얹혀가는 방식이라 이미 안전하지만, 가시성 조건을 직접 다시 쓰는 새 정책이 필요해지면 반드시 `can_view_post` 호출로 만들 것.
+- ⭐ **가시성 판정 단일 소스 (2026-07-20 확정)**: 게시물 가시성 판정은 반드시 `can_view_post(p posts, viewer uuid)` 함수를 경유할 것 — **조건을 다른 정책에 복붙 금지**. 지금 `posts_select_visible`과 `country_visits_select_visible`이 이 함수 하나를 공유한다. **좋아요·댓글 RLS를 만들 때도 이 함수를 재사용할 것** — 지금 있는 `post_likes_select_if_post_visible`/`comments_select_if_post_visible`는 `exists (select 1 from posts where posts.id = ...)`로 posts 테이블 자체의 RLS(=can_view_post)에 암묵적으로 얹혀가는 방식이라 이미 안전하지만(**post_likes는 Phase P에서 롤백 트랜잭션 6시나리오로 실증 완료 — `scripts/verify-likes-rls.sql`**), 가시성 조건을 직접 다시 쓰는 새 정책이 필요해지면 반드시 `can_view_post` 호출로 만들 것.
 - **friendships 상태 전이 규칙 (2026-07-20 확정, RLS + 트리거로 강제)**: INSERT는 `status='pending'`일 때만 허용(직접 `accepted`로 생성 불가) / pending→accepted 전환(UPDATE)은 **요청받은 쪽(비요청자)만** 가능, 요청자 본인은 셀프 수락 불가 / **accepted가 된 뒤엔 그 행을 UPDATE로 더 바꿀 수 없음** — 끊기·거절은 항상 DELETE(둘 다 동일 처리). `friendships_lock_identity` 트리거가 UPDATE 시 `user_low`/`user_high`/`requested_by`/`created_at` 변조를 막는다(RLS의 USING/WITH CHECK만으론 "이전 행과 동일해야 함"을 표현할 수 없어 트리거로 보강한 것).
 - **RLS 검증 하네스**: `scripts/verify-friends-rls.sql` — 롤백 트랜잭션 안에서 `set local role authenticated` + `request.jwt.claims`로 특정 유저를 흉내내 정책을 실제로 검증하는 패턴(각 시나리오 결과를 temp table에 모아뒀다가 마지막에 한 번에 조회 — `supabase db query`가 멀티스테이트먼트 스크립트에서 마지막 statement 결과만 돌려주는 걸 발견해서 우회한 방식). 이후 posts/country_visits/friendships RLS를 다시 건드릴 때(좋아요·댓글 등) 이 파일을 복제해서 시나리오만 바꿔 재사용할 것.
 
