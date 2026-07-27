@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -21,6 +21,7 @@ import { theme } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import { resolveMediaUrls } from '@/lib/media';
 import { deletePost, VISIBILITY_LABELS, type PostVisibility } from '@/lib/posts';
+import { getLikeState, setLike } from '@/lib/likes';
 import { getCountryName } from '@/lib/countryFromCoord';
 import { getCountryNameKo } from '@/lib/countryNamesKo';
 import { useAuth } from '@/context/auth';
@@ -76,6 +77,82 @@ export default function PostDetailScreen() {
   // 재시도 버튼이 누르면 값을 올려 아래 useEffect를 다시 실행시키는 트리거 —
   // 쿼리 자체는 그대로, id가 안 바뀌어도 같은 조회를 다시 돌리기 위한 것.
   const [retryToken, setRetryToken] = useState(0);
+
+  // 좋아요 (Phase P-2). 낙관적 토글 + 400ms 디바운스 최종상태 쓰기.
+  //   serverLiked/serverCount = 마지막으로 서버에서 확정된 값
+  //   pendingLiked            = 하트를 눌러 반영한 UI 의도값(즉각 반응)
+  //   표시 개수 = serverCount + (pending≠server면 ±1) → 항상 파생값이라 원복이 깔끔.
+  const userId = session?.user.id;
+  const [serverLiked, setServerLiked] = useState(false);
+  const [serverCount, setServerCount] = useState(0);
+  const [pendingLiked, setPendingLiked] = useState(false);
+  // flush 클로저가 최신 값을 보게 하는 ref들(리렌더와 무관하게 참조).
+  const serverLikedRef = useRef(false);
+  const pendingLikedRef = useRef(false);
+  const likeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushingRef = useRef(false);
+  const unmountedRef = useRef(false);
+  const flushRef = useRef<() => void>(() => {});
+
+  const displayCount = serverCount + (pendingLiked === serverLiked ? 0 : pendingLiked ? 1 : -1);
+
+  // pending과 server가 어긋나면 그 방향으로 1회 쓴다. 연타로 여러 번 뒤집혔어도
+  // while로 최종상태에 수렴(setLike는 멱등 — 23505/0행 흡수). 진짜 에러만
+  // 서버값으로 원복. 언마운트 후엔 setState/Alert를 건너뛴다(떠난 화면).
+  const flushLike = useCallback(async () => {
+    if (likeTimerRef.current) {
+      clearTimeout(likeTimerRef.current);
+      likeTimerRef.current = null;
+    }
+    if (flushingRef.current) return;
+    if (!userId) return;
+    if (pendingLikedRef.current === serverLikedRef.current) return;
+    flushingRef.current = true;
+    try {
+      while (pendingLikedRef.current !== serverLikedRef.current) {
+        const desired = pendingLikedRef.current;
+        await setLike(id, userId, desired);
+        serverLikedRef.current = desired;
+        if (!unmountedRef.current) {
+          setServerLiked(desired);
+          setServerCount((c) => c + (desired ? 1 : -1));
+        }
+      }
+    } catch (err) {
+      console.error('[P-2] 좋아요 반영 실패:', err);
+      const synced = serverLikedRef.current;
+      pendingLikedRef.current = synced;
+      if (!unmountedRef.current) {
+        setPendingLiked(synced);
+        Alert.alert('처리하지 못했어요', '다시 시도해주세요.');
+      }
+    } finally {
+      flushingRef.current = false;
+    }
+  }, [id, userId]);
+
+  // 하트 탭 — 즉각 반영 후 400ms 디바운스로 최종상태만 쓴다.
+  const onToggleLike = useCallback(() => {
+    if (!userId) return;
+    const next = !pendingLikedRef.current;
+    pendingLikedRef.current = next;
+    setPendingLiked(next);
+    if (likeTimerRef.current) clearTimeout(likeTimerRef.current);
+    likeTimerRef.current = setTimeout(() => {
+      void flushLike();
+    }, 400);
+  }, [userId, flushLike]);
+
+  // 언마운트/화면 이탈 시 대기 중인 쓰기를 즉시 flush — 타이머 대기 중 떠나면
+  // 쓰기가 유실돼 "하트 눌렀는데 다음 진입 시 빈 하트"가 되는 걸 막는다.
+  // 떠난 화면이라 실패해도 원복 대상이 없어 조용히 둔다(다음 진입 시 서버값이 진실).
+  flushRef.current = flushLike;
+  useEffect(() => {
+    return () => {
+      unmountedRef.current = true;
+      void flushRef.current();
+    };
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -142,13 +219,34 @@ export default function PostDetailScreen() {
 
       if (cancelled) return;
       setPhotoUrls(rawUrls.map((u) => resolved[u]).filter((u): u is string => !!u));
+
+      // 좋아요 상태 로드 (Phase P-2). 조회 실패는 조용히 넘기지 않고 전체
+      // ErrorView로 — 재시도가 게시물/사진/좋아요를 함께 다시 불러온다.
+      if (userId) {
+        try {
+          const likeState = await getLikeState(id, userId);
+          if (cancelled) return;
+          setServerLiked(likeState.likedByMe);
+          setPendingLiked(likeState.likedByMe);
+          setServerCount(likeState.count);
+          serverLikedRef.current = likeState.likedByMe;
+          pendingLikedRef.current = likeState.likedByMe;
+        } catch (likeErr) {
+          if (cancelled) return;
+          console.error('[P-2] 좋아요 상태 조회 실패:', likeErr);
+          setFetchError(true);
+          setLoading(false);
+          return;
+        }
+      }
+
       setLoading(false);
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [id, retryToken]);
+  }, [id, retryToken, userId]);
 
   function handleCarouselScrollEnd(event: NativeSyntheticEvent<NativeScrollEvent>) {
     if (carouselWidth === 0) return;
@@ -291,6 +389,14 @@ export default function PostDetailScreen() {
           )}
 
           <View style={styles.body}>
+            {/* 좋아요 (Phase P-2) — 하트 + 개수. 캐러셀 바로 아래(인스타식 위치). */}
+            <Pressable style={styles.likeRow} onPress={onToggleLike} hitSlop={8}>
+              <Text style={[styles.heart, pendingLiked && styles.heartActive]}>
+                {pendingLiked ? '♥' : '♡'}
+              </Text>
+              {displayCount > 0 && <Text style={styles.likeCount}>{displayCount}</Text>}
+            </Pressable>
+
             {/* 위치 */}
             <View style={styles.locationSection}>
               <Text style={styles.locationTitle}>{post.placeLabel || countryName || '위치 정보 없음'}</Text>
@@ -483,6 +589,26 @@ const styles = StyleSheet.create({
   body: {
     padding: 20,
     gap: 18,
+  },
+
+  // 좋아요
+  likeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  heart: {
+    fontSize: 26,
+    lineHeight: 30,
+    color: theme.colors.textSecondary,
+  },
+  heartActive: {
+    color: '#ff3b30',
+  },
+  likeCount: {
+    fontSize: 15,
+    fontFamily: theme.fonts.semibold,
+    color: theme.colors.text,
   },
 
   // 위치
