@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 import { Stack, useRouter, useSegments, type ErrorBoundaryProps } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
@@ -8,6 +8,7 @@ import 'react-native-reanimated';
 
 import { AuthProvider, useAuth } from '@/context/auth';
 import { Text } from '@/components/AppText';
+import { ErrorView } from '@/components/ErrorView';
 import { theme } from '@/constants/theme';
 
 // 루트 레벨 렌더 에러 바운더리 — expo-router가 이 파일의 default export(RootLayout,
@@ -60,13 +61,27 @@ const errorStyles = StyleSheet.create({
   },
 });
 
+const profileErrorStyles = StyleSheet.create({
+  root: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    backgroundColor: theme.colors.background,
+  },
+});
+
 // auth 상태가 확정될 때까지 스플래시 화면 유지
 SplashScreen.preventAutoHideAsync();
 
 function RootLayoutNav() {
-  const { session, hasProfile, loading } = useAuth();
+  const { session, profileStatus, loading, refreshProfile } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+  // 프로필 판정 실패(profileStatus === 'error') 시 재시도 중임을 보여주기 위한 로컬 상태.
+  // 재시도 동안 status는 'error'로 유지되므로(auth context가 'checking'으로 되돌리지
+  // 않음) 아래 에러 화면이 그대로 머문다 — 스택이 잠깐 보였다 사라지는 깜빡임 없음.
+  const [retryingProfile, setRetryingProfile] = useState(false);
   // Pretendard 정적 OTF 5종 — weight별 fontFamily로 등록(theme.ts의 fonts와
   // 이름을 맞춤). 로드가 auth 확정과 같은 스플래시 게이트에 합류한다.
   const [fontsLoaded, fontError] = useFonts({
@@ -93,12 +108,37 @@ function RootLayoutNav() {
 
     if (!session) {
       if (!inAuth) router.replace('/(auth)/login' as any);
-    } else if (!hasProfile) {
+    } else if (profileStatus === 'error') {
+      // 판정 불가 — 어디로도 보내지 않는다. 특히 온보딩으로 보내면 안 된다
+      // (프로필이 있는데 조회만 실패한 경우가 여기로 온다). 아래에서 재시도 UI를 렌더.
+      return;
+    } else if (profileStatus === 'none') {
       if (!inOnboarding) router.replace('/(onboarding)/username' as any);
     } else {
       if (inAuth || inOnboarding) router.replace('/(tabs)');
     }
-  }, [session, hasProfile, loading, fontsLoaded, fontError]);
+  }, [session, profileStatus, loading, fontsLoaded, fontError]);
+
+  async function handleRetryProfile() {
+    setRetryingProfile(true);
+    await refreshProfile();
+    setRetryingProfile(false);
+  }
+
+  // 세션은 있는데 프로필 판정이 불가능한 상태 — 온보딩으로 튀지 않게 여기서 붙잡는다.
+  // 스플래시는 위 useEffect에서 이미 내렸으므로 갇히지도 않는다(fail-open).
+  if (session && profileStatus === 'error') {
+    return (
+      <View style={profileErrorStyles.root}>
+        {retryingProfile ? (
+          <ActivityIndicator color={theme.colors.accent} />
+        ) : (
+          <ErrorView message="프로필을 확인하지 못했어요" onRetry={handleRetryProfile} />
+        )}
+        <StatusBar style="auto" />
+      </View>
+    );
+  }
 
   return (
     <>
