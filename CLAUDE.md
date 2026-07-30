@@ -50,7 +50,7 @@
 - **⭐ 다음 세션 시작점**: 아래 로드맵 순서대로 (배경은 바로 아래 "⭐ 출시 시점 방향 결정" 참고).
   1. ✅ **친구 기능 UI — 완료 (Phase O)**
   2. ✅ **좋아요 — 완료 (Phase P)**
-  3. ⭐ **다음: 댓글** — `comments` 테이블·RLS 이미 존재(대댓글 `parent_comment_id` 포함). 가시성은 `comments_select_if_post_visible`가 좋아요와 같은 방식으로 posts RLS(=can_view_post)에 얹혀감 — 새로 가시성 조건을 쓰게 되면 반드시 `can_view_post` 재사용(아래 "권한/가시성 모델").
+  3. ⭐ **진행 중: 댓글 (Phase Q)** — Q-0(프로필 fail-closed)·Q-1(하드닝 마이그레이션) 완료. **다음은 Q-2 `lib/comments.ts` 데이터 계층 → Q-3 게시물 상세 댓글 UI.** 상세는 아래 Phase Q 참고.
   4. 장소검색(지오코딩) / 3D 지구본 토글
   5. **출시 준비**: 구글 플레이 콘솔 개발자 등록($25) + AAB 빌드(EAS, `preview` 프로필은 APK라 별도 프로필 필요) + 스토어 등록 자료(스크린샷, 설명, 개인정보처리방침 URL) 준비
   - 착수 전 반드시 확인: "중요 결정·원칙" — 소셜 로그인은 이메일+구글만(카카오/네이버/애플 v1 제외), SDK 54→56 업그레이드는 출시 후, `fontWeight` 금지(`fontFamily: theme.fonts.*`만), 나라 색칠 생성/삭제는 DB 트리거 전담(앱은 색만 UPDATE).
@@ -136,8 +136,24 @@
     - **`lib/likes.ts`**: `getLikeState(postId, userId)→{count, likedByMe}` (count는 `head:true count:'exact'`, likedByMe는 PK 점조회, **조회 에러는 throw**해서 호출부가 ErrorView 처리 — 조용한 실패 금지) / `setLike(postId, userId, liked)` **멱등** (liked면 INSERT·`23505`(PK 중복=이미 좋아요) 흡수 / unliked면 DELETE·0행=이미 없음 흡수, **진짜 에러만 throw** — 친구 기능 자기교정 패턴 재사용).
     - **`app/post/[id].tsx` 하트 UI**: 캐러셀 바로 아래 ♡/♥(active=빨강 `#ff3b30`)+개수, `getLikeState`를 기존 상세 조회에 병합(실패 시 전체 ErrorView+재시도). **낙관적 토글 + 400ms 디바운스 최종상태 쓰기**: 탭 즉시 반영 → 디바운스로 최종상태만 1회 씀. 표시 개수 = `serverCount + (pending≠server면 ±1)`로 항상 파생값 → 원복이 깔끔. 연타는 flush의 `while`로 최종상태 수렴(setLike 멱등이라 안전), 진짜 에러만 서버값 원복+Alert. **⚠️ 언마운트 cleanup에서 pending write 즉시 flush** — 타이머 대기 중(400ms 안) 뒤로가기하면 쓰기가 유실돼 "하트 눌렀는데 재진입 시 빈 하트"가 되는 걸 막음. 떠난 화면이라 flush 실패는 조용히(원복 대상 없음, 다음 진입 시 서버값이 진실). 순수 JS(supabase-js+state)라 새 네이티브 모듈 없음 — 핫리로드로 검증.
     - 검증: tsc 클린(기존 delete-account Deno 에러 제외), verify 스크립트 6시나리오 롤백 통과. 에뮬 2계정: 기본 토글/연타 최종상태 수렴/flush 유지(하트 누르고 즉시 뒤로가기 후 재진입 유지)/2계정 가시성/본인 글 좋아요/실패 원복 전부 통과. ⚠️ 2계정 가시성 테스트 시 주의: gp123 계정이 **private**이라 전체공개 글도 비친구에겐 안 보임(정상) — 크로스계정 UI 검증하려면 계정을 public으로 바꾸거나 친구를 맺어야 함.
+  - Phase Q: **댓글 (진행 중, 2026-07-30 시작)**. 조사 결과 `comments` 테이블·RLS 4종이 초기 스키마에 이미 있었고 **드리프트 0**이라 "좋아요형(코드 중심) + 작은 하드닝 마이그레이션 1개"로 크기가 정해졌다.
+    - **Q-0 (커밋 `bf983c2`) — 프로필 확인 fail-closed (댓글과 별건, 먼저 청산)**: `context/auth.tsx`의 `checkProfile`이 `error`를 보지 않아 조회 실패 시 `data=null` → `hasProfile=false` → **프로필이 멀쩡히 있는 사용자가 온보딩으로 튀는** 버그. 비행기 모드 콜드스타트로 **재현 후 수정**(수정 전/후 대조 확인). Phase J의 username 중복확인 fail-closed와 같은 원칙.
+      - `hasProfile: boolean | null` → `profileStatus: 'checking' | 'exists' | 'none' | 'error'`. 라우팅(`app/_layout.tsx`)은 `'error'`면 **어디로도 replace하지 않고** 전체화면 `ErrorView`+재시도를 렌더 — 스플래시는 이미 내린 뒤라 갇히지도 않는다(Phase K `fontError` fail-open과 같은 처리).
+      - ⭐ **회귀 방어**: 마지막으로 확정된 판정을 `lastKnownRef`에 두고 조회 실패 시 그 값을 유지한다. 안 그러면 **앱을 쓰던 중 토큰 갱신이 실패했을 때 멀쩡한 사용자가 에러 화면으로 쫓겨난다.** `'error'`는 확정된 적 없는 콜드스타트에서만 나온다. 로그아웃 시 ref를 비워 다음 사용자가 이전 판정을 물려받지 않게 함. 같은 이유로 `onAuthStateChange`도 확정값이 없을 때만 `'checking'`으로 되돌린다.
+    - **Q-1 — 하드닝 마이그레이션 (`20260730100000_comments_hardening.sql`)**: 가시성 정책(SELECT/INSERT/DELETE)은 **손대지 않음** — `exists(posts …)`로 posts RLS(=`can_view_post`)에 얹혀가는 것이 롤백 트랜잭션으로 실증됐고, 가시성 조건을 새로 쓰지 않으므로 "can_view_post 재사용" 규칙도 발동하지 않는다. 대신 검증에서 드러난 갭 4개만 메움:
+      - ① `body` 길이 CHECK(`char_length(btrim(body)) between 1 and 500`) — 수정 전엔 10만자·공백만 INSERT가 전부 통과했다.
+      - ② **대댓글 정합성 복합 FK** — 기존 단일 FK가 `post_id`를 안 봐서 **다른 글(볼 수 없는 글 포함)의 댓글을 부모로 지정한 INSERT가 통과**했다. `drop 단일FK → unique(id, post_id) → FK (parent_comment_id, post_id) references comments(id, post_id)` 3단계로 교체. `parent_comment_id`가 NULL이면 **MATCH SIMPLE** 규칙상 검사를 건너뛰어 최상위 댓글은 그대로 허용된다(이론이 아니라 INSERT로 실증함).
+      - ③ `(post_id, created_at)` 인덱스로 교체(구 `comments_post_idx(post_id)`는 prefix로 완전 대체돼 drop).
+      - ④ **UPDATE 정책 제거** — 아래 "댓글 수정 미지원" 참고.
+      - **검증**: `scripts/verify-comments-rls.sql` — 리허설(DDL 인라인 + 전체 rollback) **32/32 OK** → `db push` → PART A만 주석 처리한 회귀 재실행 **25/25 OK, 리허설과 값 완전 동일**. 리허설 후 DB 무오염(행수·정책·인덱스·제약 전부 적용 전 상태)도 실사로 확인. 앱 스모크는 게시물 상세 진입(댓글 UI가 아직 없어 영향 표면 없음) 크래시 없음.
+- **⭐ 댓글 수정(edit) 미지원 확정 (2026-07-30, Phase Q-1)**: v1은 댓글 **수정을 지원하지 않는다.** 삭제 후 재작성으로 갈음.
+  - **UPDATE 정책(`comments_update_self`)을 삭제한 근거**: 그 정책은 `user_id`만 보고 다른 컬럼을 안 잠갔다 → **`created_at` 위조가 통과**했고(검증 8-4에서 `affected=1` 확인), 댓글 목록을 `created_at` 순으로 정렬하므로 **자기 댓글을 맨 위에 고정하는 정렬 조작 벡터**가 됐다. 수정 기능이 없으니 정책 자체를 없애 벡터를 제거하는 쪽이 맞다.
+  - 나중에 수정을 넣게 되면 정책을 되살리지 말고, `updated_at` 추가 + `post_id`/`user_id`/`created_at`/`parent_comment_id` 불변을 강제하는 **identity-lock 트리거**(`friendships_lock_identity` 패턴)와 함께 새로 설계할 것. "수정됨" 표시도 같이.
+  - ⚠️ **UPDATE 정책이 아예 없으면 에러가 아니라 "조용한 0행"이다** (Phase N에서 확인한 RLS USING 위반과 같은 성질 — 검증 N9로 재확인). 즉 앱에서 실수로 `comments.update()`를 호출하면 **성공한 척 0행**이 된다. 나중에 수정 기능을 붙일 때 "왜 에러가 안 나지?"로 헤매지 말 것 — Phase O의 0행 자기교정 패턴과 같은 이유로, 영향 행 수를 확인하지 않으면 조용히 실패한다.
 - **알려진 갭 (백로그, 별도 작업 — Phase O 4단계 조사에서 발견)**:
+  - **복합 FK의 참조하는 쪽 `(parent_comment_id, post_id)`에 인덱스가 없다 (Phase Q-1)**: 댓글 1건을 DELETE할 때 자식을 찾느라 스캔이 돈다. 현재 규모(0행)에선 무의미하고 글/계정 삭제 경로는 `post_id` 인덱스를 타므로 영향 없음. **대댓글 UI를 실제로 만들 때 재검토** — 지금 인덱스를 더 얹는 건 과설계로 판단.
   - **프로필 그리드 1페이지 / 나라 필터 칩 / filteredCount가 마운트 1회라 stale**: 글 작성·삭제 후 프로필로 돌아와도 그리드·칩·"내 기록 N"이 갱신되지 않는다(탭이 계속 마운트된 채라 앱 재시작 전엔 안 맞음). 통계 3개는 4단계에서 `useFocusEffect`로 옮겨 해소했지만, 그리드는 페이지네이션 상태(`page`/`hasMore`/`requestIdRef`) 리셋이 얽혀 있어 손이 더 간다. **친구 기능과 무관한 기존 갭** — 별도 작업으로 다룰 것.
+- **관찰 노트 (조치 안 함 — Phase Q-0 검증 중 발견)**: 에뮬레이터를 **비행기 모드로 오래(≈10분) 두면** supabase-js의 토큰 갱신이 반복 실패하면서 세션이 로그인 화면으로 떨어진다. 다만 **콜드스타트하면 저장된 세션이 정상 복원**된다(실제로 확인). Q-0의 프로필 확인 경로와 **무관한 supabase-js 세션 갱신 쪽 동작**이고 스스로 복구되므로 손대지 않았다 — 오프라인 테스트 중 로그인 화면이 떠도 당황하지 말 것.
 - **무해 판정 경고 (조치 안 함, 이유 기록 — Phase M 조사에서 발견)**:
   - `npm audit` 2건 — ① `postcss <8.5.10`(CSS Stringify XSS) ② `uuid <11.1.1`(v3/v5/v6 buffer bounds). 둘 다 `@expo/metro-config`/`@expo/config-plugins`/`xcode` 등 **Expo CLI 빌드 툴체인의 전이 의존성**이라 로컬 PC에서 `expo start`/`prebuild`할 때만 관여하고 **출시된 앱 런타임(사용자 기기)엔 포함되지 않음**. `npm audit fix --force`가 제시하는 유일한 수정 경로가 `expo@57.0.7` 메이저 업그레이드뿐이라 지금은 조치 불필요 — 위 "출시 후 TODO"의 SDK 업그레이드 때 자연히 같이 해결됨.
   - ⭐ **헷갈리지 말 것**: 위 audit의 `uuid`는 npm 레지스트리의 **`uuid` 패키지**(node_modules 안, xcode가 물고 있는 것)이고, 이번에 `expo-crypto`로 교체한 건 `expo-modules-core`가 export하던 **`uuid` 유틸(패키지 아님, JS API)**이다 — 이름만 같은 완전히 별개의 것. compose.tsx 쪽은 이미 교체 완료, audit의 `uuid` 패키지는 위 항목대로 SDK 업그레이드 때 처리.
@@ -166,6 +182,7 @@
   - **[P2 마무리 이후 로드맵 — 출시 전 순차 착수]**: 친구 기능 → 좋아요 → 댓글 → 장소검색/3D 지구본. 배경·순서 근거는 위 "⭐ 출시 시점 방향 결정" 참고 — v1.1 기능이지만 이번엔 출시 후가 아니라 출시 전에 만든다.
   - **[출시]**
     - 구글 플레이 콘솔 개발자 등록($25) + AAB 빌드(EAS, preview는 APK라 별도 프로필 필요) + 스토어 등록 자료(스크린샷, 설명, 개인정보처리방침 URL 연결 등) 준비
+    - ⚠️ **로고 텍스트가 아직 `colormap`** (Phase Q 조사 중 발견) — `app/(auth)/login.tsx:60`, `app/(auth)/sign-up.tsx:92`, `app/(onboarding)/username.tsx:116` 3곳. 앱 이름은 Tintrail로 확정됐고 지도 탭 헤더는 이미 "Tintrail"이라 **로그인/회원가입/온보딩만 구 이름이 남아 있다.** 출시 전 교체할 것.
 
 ## 기능 범위 (단계별 — 범위 밖은 건드리지 말 것)
 
@@ -212,9 +229,11 @@
 - **탐색 피드** = (A public AND P public) ∪ (A가 내 친구 AND P가 public 또는 friends)
 - ⚠️ 이 권한은 **클라이언트가 아니라 Supabase RLS(DB)로 강제**한다. 클라이언트 필터만으로 막지 말 것.
 - ✅ ~~⛔ 친구 기능 선행 조건~~ **해소 완료 (2026-07-20, Phase N)** — `country_visits_select_visible`을 "뷰어가 볼 수 있는 게시물이 그 나라에 하나라도 있어야" 노출하도록 재작성함(마이그레이션 `20260720100000_friend_kickoff_rls_hardening.sql`). 해소 근거: 리허설(rollback) + 라이브 적용 후 재검증 둘 다 시나리오 1(비공개 글만 있는 나라 → 타인에게 country_visits 0행, 수정 전이었다면 1이 나왔을 자리) 포함 18개 시나리오 전부 통과.
-- ⭐ **가시성 판정 단일 소스 (2026-07-20 확정)**: 게시물 가시성 판정은 반드시 `can_view_post(p posts, viewer uuid)` 함수를 경유할 것 — **조건을 다른 정책에 복붙 금지**. 지금 `posts_select_visible`과 `country_visits_select_visible`이 이 함수 하나를 공유한다. **좋아요·댓글 RLS를 만들 때도 이 함수를 재사용할 것** — 지금 있는 `post_likes_select_if_post_visible`/`comments_select_if_post_visible`는 `exists (select 1 from posts where posts.id = ...)`로 posts 테이블 자체의 RLS(=can_view_post)에 암묵적으로 얹혀가는 방식이라 이미 안전하지만(**post_likes는 Phase P에서 롤백 트랜잭션 6시나리오로 실증 완료 — `scripts/verify-likes-rls.sql`**), 가시성 조건을 직접 다시 쓰는 새 정책이 필요해지면 반드시 `can_view_post` 호출로 만들 것.
+- ⭐ **가시성 판정 단일 소스 (2026-07-20 확정)**: 게시물 가시성 판정은 반드시 `can_view_post(p posts, viewer uuid)` 함수를 경유할 것 — **조건을 다른 정책에 복붙 금지**. 지금 `posts_select_visible`과 `country_visits_select_visible`이 이 함수 하나를 공유한다. **좋아요·댓글 RLS를 만들 때도 이 함수를 재사용할 것** — 지금 있는 `post_likes_select_if_post_visible`/`comments_select_if_post_visible`는 `exists (select 1 from posts where posts.id = ...)`로 posts 테이블 자체의 RLS(=can_view_post)에 암묵적으로 얹혀가는 방식이라 이미 안전하고, **둘 다 롤백 트랜잭션으로 실증 완료**(post_likes = Phase P 6시나리오 `scripts/verify-likes-rls.sql` / comments = Phase Q-1 `scripts/verify-comments-rls.sql`). 가시성 조건을 직접 다시 쓰는 새 정책이 필요해지면 반드시 `can_view_post` 호출로 만들 것.
 - **friendships 상태 전이 규칙 (2026-07-20 확정, RLS + 트리거로 강제)**: INSERT는 `status='pending'`일 때만 허용(직접 `accepted`로 생성 불가) / pending→accepted 전환(UPDATE)은 **요청받은 쪽(비요청자)만** 가능, 요청자 본인은 셀프 수락 불가 / **accepted가 된 뒤엔 그 행을 UPDATE로 더 바꿀 수 없음** — 끊기·거절은 항상 DELETE(둘 다 동일 처리). `friendships_lock_identity` 트리거가 UPDATE 시 `user_low`/`user_high`/`requested_by`/`created_at` 변조를 막는다(RLS의 USING/WITH CHECK만으론 "이전 행과 동일해야 함"을 표현할 수 없어 트리거로 보강한 것).
-- **RLS 검증 하네스**: `scripts/verify-friends-rls.sql` — 롤백 트랜잭션 안에서 `set local role authenticated` + `request.jwt.claims`로 특정 유저를 흉내내 정책을 실제로 검증하는 패턴(각 시나리오 결과를 temp table에 모아뒀다가 마지막에 한 번에 조회 — `supabase db query`가 멀티스테이트먼트 스크립트에서 마지막 statement 결과만 돌려주는 걸 발견해서 우회한 방식). 이후 posts/country_visits/friendships RLS를 다시 건드릴 때(좋아요·댓글 등) 이 파일을 복제해서 시나리오만 바꿔 재사용할 것.
+- **RLS 검증 하네스**: `scripts/verify-friends-rls.sql` — 롤백 트랜잭션 안에서 `set local role authenticated` + `request.jwt.claims`로 특정 유저를 흉내내 정책을 실제로 검증하는 패턴(각 시나리오 결과를 temp table에 모아뒀다가 마지막에 한 번에 조회 — `supabase db query`가 멀티스테이트먼트 스크립트에서 마지막 statement 결과만 돌려주는 걸 발견해서 우회한 방식). 이후 posts/country_visits/friendships RLS를 다시 건드릴 때 이 파일을 복제해서 시나리오만 바꿔 재사용할 것. 복제본: `scripts/verify-likes-rls.sql`(Phase P), `scripts/verify-comments-rls.sql`(Phase Q-1).
+  - ⭐ **verify-comments-rls.sql은 "리허설 겸 회귀" 2용도**: `[PART A]`에 마이그레이션 DDL을 인라인으로 넣어두고 통째로 rollback하므로, **db push 전에 라이브 DB에서 결과를 미리 볼 수 있다**(실데이터 무오염). push 이후엔 `[PART A]` 블록만 주석 처리하면 그대로 회귀 테스트가 된다. 앞으로 마이그레이션이 있는 작업은 이 형태를 기본으로 쓸 것.
+  - ⚠️ 스크립트를 가공할 때 **PowerShell `Get-Content`/`Set-Content` 왕복 금지** — 기본 인코딩이 ANSI라 한글이 깨지면서 줄이 붙어 문법 오류가 난다(실제로 겪음). 행 단위 가공은 `sed`(바이트 안전)로 할 것.
 
 ## 장소 기록 방식
 
