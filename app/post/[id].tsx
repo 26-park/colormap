@@ -4,10 +4,13 @@ import {
   Alert,
   Dimensions,
   Image,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
+  TextInput,
   View,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -22,6 +25,17 @@ import { supabase } from '@/lib/supabase';
 import { resolveMediaUrls } from '@/lib/media';
 import { deletePost, VISIBILITY_LABELS, type PostVisibility } from '@/lib/posts';
 import { getLikeState, setLike } from '@/lib/likes';
+import {
+  listComments,
+  getCommentCount,
+  createComment,
+  removeComment,
+  validateCommentBody,
+  CommentBodyRejectedError,
+  COMMENT_MAX_LENGTH,
+  type Comment,
+} from '@/lib/comments';
+import * as Crypto from 'expo-crypto';
 import { getCountryName } from '@/lib/countryFromCoord';
 import { getCountryNameKo } from '@/lib/countryNamesKo';
 import { useAuth } from '@/context/auth';
@@ -56,6 +70,18 @@ function formatDate(iso: string) {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}.${m}.${day}`;
+}
+
+// 댓글용 상대시간. 하루가 넘어가면 그냥 날짜로 — 목록이 오래된 순이라
+// 오래된 댓글에 "30일 전" 같은 표기는 오히려 읽기 나쁘다.
+function formatRelativeTime(iso: string) {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return '방금';
+  if (min < 60) return `${min}분 전`;
+  const hour = Math.floor(min / 60);
+  if (hour < 24) return `${hour}시간 전`;
+  return formatDate(iso);
 }
 
 export default function PostDetailScreen() {
@@ -95,6 +121,23 @@ export default function PostDetailScreen() {
   const flushRef = useRef<() => void>(() => {});
 
   const displayCount = serverCount + (pendingLiked === serverLiked ? 0 : pendingLiked ? 1 : -1);
+
+  // 댓글 (Phase Q-3). 목록은 오래된 순 전체 로드(limit 100).
+  //   commentCount — 서버 기준 개수. 목록 상한(100)을 넘으면 목록보다 클 수 있어서
+  //                  그 경우 "일부만 표시 중" 안내를 띄운다(승급 조건 신호).
+  //   myProfile    — 낙관적 항목에 보여줄 내 표시 정보. 서버 응답이 오면 교체된다.
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [commentCount, setCommentCount] = useState(0);
+  const [commentsError, setCommentsError] = useState(false);
+  const [myProfile, setMyProfile] = useState<{ username: string | null; avatarUrl: string | null }>({
+    username: null,
+    avatarUrl: null,
+  });
+  const [draft, setDraft] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const draftReject = validateCommentBody(draft);
+  const canSubmit = !submitting && draftReject === null;
 
   // pending과 server가 어긋나면 그 방향으로 1회 쓴다. 연타로 여러 번 뒤집혔어도
   // while로 최종상태에 수렴(setLike는 멱등 — 23505/0행 흡수). 진짜 에러만
@@ -238,6 +281,30 @@ export default function PostDetailScreen() {
           setLoading(false);
           return;
         }
+
+        // 댓글 (Q-3). 좋아요와 달리 여기서 실패해도 전체 ErrorView로 막지 않는다 —
+        // 사진·글은 이미 볼 수 있으므로 댓글 영역만 재시도 가능한 에러로 표시한다.
+        setCommentsError(false);
+        try {
+          const [rows, count] = await Promise.all([listComments(id), getCommentCount(id)]);
+          if (cancelled) return;
+          setComments(rows);
+          setCommentCount(count);
+        } catch (commentErr) {
+          if (cancelled) return;
+          console.error('[Q-3] 댓글 조회 실패:', commentErr);
+          setCommentsError(true);
+        }
+
+        // 낙관적 항목에 쓸 내 표시 정보. 실패해도 조용히 넘어간다(이름 없이도
+        // 작성 자체는 되고, 서버 응답이 오면 정확한 값으로 교체되므로).
+        const { data: me } = await supabase
+          .from('profiles')
+          .select('username, avatar_url')
+          .eq('id', userId)
+          .maybeSingle();
+        if (cancelled) return;
+        if (me) setMyProfile({ username: me.username, avatarUrl: me.avatar_url });
       }
 
       setLoading(false);
@@ -303,6 +370,104 @@ export default function PostDetailScreen() {
     }
   }
 
+  // 댓글 작성 (Q-3). id를 클라이언트에서 만들어 낙관적 항목과 INSERT가 같은 id를
+  // 쓰므로 "임시 id → 실제 id" 교체가 필요 없다(compose의 postId와 같은 방식).
+  // 성공하면 서버가 돌려준 행으로 교체해 created_at/username을 정확한 값으로 맞춘다.
+  // ⚠️ 전송 중 뒤로가기: 응답을 받을 화면이 이미 없으므로 unmountedRef로 setState를
+  // 건너뛴다(P-2 flush와 같은 논리 — 떠난 화면엔 원복할 UI가 없다).
+  async function handleSubmitComment() {
+    if (!userId || !id) return;
+
+    const reason = validateCommentBody(draft);
+    if (reason) {
+      Alert.alert(
+        reason === 'empty' ? '내용을 입력해주세요' : '너무 길어요',
+        reason === 'empty' ? '댓글 내용을 적어주세요.' : `댓글은 ${COMMENT_MAX_LENGTH}자까지 쓸 수 있어요.`,
+      );
+      return;
+    }
+
+    const body = draft.trim();
+    const newId = Crypto.randomUUID();
+    const optimistic: Comment = {
+      id: newId,
+      userId,
+      body,
+      createdAt: new Date().toISOString(),
+      username: myProfile.username,
+      avatarUrl: myProfile.avatarUrl,
+    };
+
+    setSubmitting(true);
+    setComments((prev) => [...prev, optimistic]);
+    setCommentCount((c) => c + 1);
+    setDraft('');
+
+    try {
+      const saved = await createComment({ id: newId, postId: id, userId, body });
+      if (unmountedRef.current) return;
+      setComments((prev) => prev.map((c) => (c.id === newId ? saved : c)));
+    } catch (err) {
+      if (unmountedRef.current) return;
+      // 실패 — 낙관적 항목을 걷어내고 입력값을 되돌려준다(다시 쓰게 하지 않음).
+      setComments((prev) => prev.filter((c) => c.id !== newId));
+      setCommentCount((c) => Math.max(0, c - 1));
+      setDraft(body);
+      if (err instanceof CommentBodyRejectedError) {
+        Alert.alert('댓글을 쓸 수 없어요', err.message);
+      } else {
+        console.error('[Q-3] 댓글 작성 실패:', err);
+        Alert.alert('등록하지 못했어요', '다시 시도해주세요.');
+      }
+    } finally {
+      if (!unmountedRef.current) setSubmitting(false);
+    }
+  }
+
+  // 댓글 삭제 (Q-3). 비가역이라 확인 다이얼로그를 두고(1단계), 낙관적으로 지우지 않고
+  // 성공을 확인한 뒤 목록에서 뺀다 — 실패했는데 사라져 있으면 "지운 줄 알았는데
+  // 남아있는" 오해가 생긴다(Phase O의 파괴적 액션 규칙).
+  function handleDeleteCommentPress(comment: Comment) {
+    Alert.alert('댓글을 삭제할까요?', '되돌릴 수 없어요.', [
+      { text: '취소', style: 'cancel' },
+      { text: '삭제', style: 'destructive', onPress: () => void runDeleteComment(comment) },
+    ]);
+  }
+
+  async function runDeleteComment(comment: Comment) {
+    try {
+      const affected = await removeComment(comment.id);
+      if (unmountedRef.current) return;
+      // ⭐ 0행 자기교정: RLS USING 위반은 에러가 아니라 0행이다. 이미 지워졌거나
+      // 내 것이 아니었다는 뜻이므로 에러 배너 대신 조용히 목록에서 정리한다.
+      setComments((prev) => prev.filter((c) => c.id !== comment.id));
+      setCommentCount((c) => Math.max(0, c - 1));
+      if (affected === 0) {
+        console.warn('[Q-3] 댓글 DELETE 0행 — 이미 삭제됐거나 권한 없음:', comment.id);
+      }
+    } catch (err) {
+      if (unmountedRef.current) return;
+      console.error('[Q-3] 댓글 삭제 실패:', err);
+      Alert.alert('삭제하지 못했어요', '다시 시도해주세요.');
+    }
+  }
+
+  // 댓글 영역만 다시 불러온다(전체 재조회가 아니라) — 목록 실패 시 재시도용.
+  async function retryComments() {
+    if (!id) return;
+    setCommentsError(false);
+    try {
+      const [rows, count] = await Promise.all([listComments(id), getCommentCount(id)]);
+      if (unmountedRef.current) return;
+      setComments(rows);
+      setCommentCount(count);
+    } catch (err) {
+      if (unmountedRef.current) return;
+      console.error('[Q-3] 댓글 재조회 실패:', err);
+      setCommentsError(true);
+    }
+  }
+
   // P2 공개범위 변경. 나라 색 변경(country/[cc].tsx)과 달리 선택 즉시 화면에
   // 반영하고, 실패하면 이전 값으로 되돌린다(결정 사항 — 낙관적 업데이트 + 원복).
   async function handleVisibilityChange(newVisibility: PostVisibility) {
@@ -324,6 +489,12 @@ export default function PostDetailScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
+      {/* 입력창이 키보드에 가리지 않게. iOS는 padding, 안드로이드는 기본
+          adjustResize가 처리하므로 behavior를 주지 않는다(다른 화면과 동일 패턴). */}
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
       {/* 헤더 */}
       <View style={styles.header}>
         <Pressable style={styles.iconBtn} onPress={() => router.back()}>
@@ -444,8 +615,83 @@ export default function PostDetailScreen() {
               </View>
               <Text style={styles.dateText}>{formatDate(post.takenAt ?? post.createdAt)}</Text>
             </View>
+
+            {/* 댓글 (Phase Q-3) */}
+            <View style={styles.commentSection}>
+              <Text style={styles.commentHeader}>댓글 {commentCount > 0 ? commentCount : ''}</Text>
+
+              {commentsError ? (
+                <ErrorView compact message="댓글을 불러오지 못했어요" onRetry={() => void retryComments()} />
+              ) : comments.length === 0 ? (
+                <Text style={styles.commentEmpty}>첫 댓글을 남겨보세요</Text>
+              ) : (
+                <View style={styles.commentList}>
+                  {comments.map((c) => (
+                    <View key={c.id} style={styles.commentRow}>
+                      {c.avatarUrl ? (
+                        <Image source={{ uri: c.avatarUrl }} style={styles.commentAvatar} />
+                      ) : (
+                        <View style={[styles.commentAvatar, styles.commentAvatarEmpty]} />
+                      )}
+                      <View style={styles.commentBubble}>
+                        <View style={styles.commentMetaRow}>
+                          <Text style={styles.commentAuthor} numberOfLines={1}>
+                            @{c.username ?? '알 수 없음'}
+                          </Text>
+                          <Text style={styles.commentTime}>{formatRelativeTime(c.createdAt)}</Text>
+                        </View>
+                        <Text style={styles.commentBody}>{c.body}</Text>
+                      </View>
+                      {c.userId === userId && (
+                        <Pressable
+                          style={styles.commentDeleteBtn}
+                          hitSlop={8}
+                          onPress={() => handleDeleteCommentPress(c)}
+                        >
+                          <Text style={styles.commentDeleteText}>삭제</Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  ))}
+
+                  {/* 목록 상한(100)을 넘은 경우 — 개수와 목록이 어긋나는 걸 숨기지 않는다 */}
+                  {commentCount > comments.length && (
+                    <Text style={styles.commentTruncated}>
+                      최근 {comments.length}개만 표시하고 있어요
+                    </Text>
+                  )}
+                </View>
+              )}
+            </View>
           </View>
         </ScrollView>
+      )}
+
+      {/* 댓글 입력 — 스크롤 영역 밖에 고정. 게시물을 볼 수 있을 때만 노출한다. */}
+      {!loading && !fetchError && !notFound && post && (
+        <View style={styles.composerBar}>
+          <TextInput
+            style={styles.composerInput}
+            value={draft}
+            onChangeText={setDraft}
+            placeholder="댓글 달기..."
+            placeholderTextColor={theme.colors.textSecondary}
+            multiline
+            maxLength={COMMENT_MAX_LENGTH}
+            editable={!submitting}
+          />
+          <Pressable
+            style={[styles.composerSend, !canSubmit && styles.composerSendDisabled]}
+            disabled={!canSubmit}
+            onPress={() => void handleSubmitComment()}
+          >
+            {submitting ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.composerSendText}>등록</Text>
+            )}
+          </Pressable>
+        </View>
       )}
 
       {/* ··· 메뉴 바텀시트 — 본인 게시물에서만 */}
@@ -496,6 +742,7 @@ export default function PostDetailScreen() {
           <ActivityIndicator color="#fff" />
         </View>
       )}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -504,6 +751,122 @@ const styles = StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: theme.colors.background,
+  },
+  flex: {
+    flex: 1,
+  },
+
+  // 댓글
+  commentSection: {
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+    paddingTop: 18,
+    gap: 12,
+  },
+  commentHeader: {
+    fontSize: 15,
+    fontFamily: theme.fonts.bold,
+    color: theme.colors.text,
+  },
+  commentEmpty: {
+    fontSize: 13,
+    color: theme.colors.textSecondary,
+    paddingVertical: 12,
+  },
+  commentList: {
+    gap: 16,
+  },
+  commentRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  commentAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+  },
+  commentAvatarEmpty: {
+    backgroundColor: '#f3f4f6',
+  },
+  commentBubble: {
+    flex: 1,
+    gap: 3,
+  },
+  commentMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  commentAuthor: {
+    flexShrink: 1,
+    fontSize: 13,
+    fontFamily: theme.fonts.semibold,
+    color: theme.colors.text,
+  },
+  commentTime: {
+    fontSize: 11,
+    color: theme.colors.textSecondary,
+  },
+  commentBody: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: theme.colors.text,
+  },
+  commentDeleteBtn: {
+    paddingHorizontal: 4,
+    paddingTop: 2,
+  },
+  commentDeleteText: {
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+  },
+  commentTruncated: {
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    paddingTop: 4,
+  },
+
+  // 댓글 입력 바
+  composerBar: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+  },
+  composerInput: {
+    flex: 1,
+    maxHeight: 110,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 10,
+    borderRadius: 20,
+    backgroundColor: '#f3f4f6',
+    fontSize: 14,
+    fontFamily: theme.fonts.regular,
+    color: theme.colors.text,
+  },
+  composerSend: {
+    minWidth: 52,
+    height: 40,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    backgroundColor: theme.colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  composerSendDisabled: {
+    opacity: 0.4,
+  },
+  composerSendText: {
+    fontSize: 14,
+    fontFamily: theme.fonts.bold,
+    color: '#fff',
   },
 
   header: {
