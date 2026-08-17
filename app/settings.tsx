@@ -235,6 +235,11 @@ export default function SettingsScreen() {
         {/* 앱 정보 */}
         <Text style={styles.sectionTitle}>앱 정보</Text>
         <View style={styles.card}>
+          {/* ODbL 4.3 출처표시 — 지도를 쓰는 한 이 항목은 지워지면 안 된다 */}
+          <Pressable style={styles.row} onPress={() => router.push('/map-credits' as any)}>
+            <Text style={styles.rowText}>지도 데이터 출처</Text>
+          </Pressable>
+          <View style={styles.divider} />
           <View style={styles.row}>
             <Text style={styles.rowText}>버전</Text>
             <Text style={styles.rowValue}>{appVersion}</Text>
