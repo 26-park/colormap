@@ -161,7 +161,7 @@
       - **삭제는 "확인 후"**(낙관적으로 지우지 않음) + **0행 자기교정** — Phase O에서 확립한 파괴적 액션 규칙 그대로. 0행이면 성공으로 치지 않고 실제 상태로 정리한다.
       - **입력검증 2중 방어**: 앱이 `validateCommentBody`로 즉시 판정(빈 문자열/500자 초과)하고, **DB CHECK 위반도 같은 `CommentBodyRejectedError` 타입으로 수렴**시킨다 — 호출부가 "앱이 걸렀나 DB가 걸렀나"를 분기할 필요 없이 한 갈래로 처리된다. Q-1의 `body` CHECK가 최종 방어선.
       - **댓글 조회 실패는 전체 ErrorView로 막지 않는다** — 사진·글은 이미 볼 수 있으므로 댓글 영역만 재시도 가능한 에러로 표시(좋아요와 다른 선택, 근거는 코드 주석에도 남김).
-      - **검증(에뮬 2계정)**: A·B·D·E(기본동작·입력검증·레이스·키보드) / C1 타계정 댓글 / C2 비공개 시 딥링크 차단(**댓글 섹션 자체가 렌더되지 않음**) / C3 친구 맺으면 열림 / C5 남의 댓글엔 삭제 버튼 없음(대조 확인) 전부 통과. 검증 후 DB 기준선 복구(comments 0행, 3계정 public, friendships 1행).
+      - **검증(에뮬 2계정)**: A·B·D·E(기본동작·입력검증·레이스·키보드) / C1 타계정 댓글 / C2 비공개 시 딥링크 차단(**댓글 섹션 자체가 렌더되지 않음**) / C3 친구 맺으면 열림 / C5 남의 댓글엔 삭제 버튼 없음(대조 확인) 전부 통과. 검증 후 DB 기준선 복구 — ⚠️ **당시 복구 문구에 `post_likes`가 빠져 있어 좋아요 2행이 3주간 남아 있었다**(2026-08-16 정리). 기준선의 정본은 "권한/가시성 모델" 섹션의 **⭐ 검증 기준선 / 검증 후 정리 체크리스트**를 볼 것 — 여기에 다시 적지 말 것.
   - Phase S: **한국 시군구 색칠 (조사 완료 2026-07-31, 진행 중)**. 세계는 나라 단위 유지, **한국만 시군구 단위로 세분**. 지도 색칠은 진입점이라는 제품 정의는 그대로.
     - ⚠️ **단위 개수는 아직 확정 아님**: 자치단체 기준 시군구는 229개지만 **확정 소스의 전체 행은 250**이다(아래 S-0 참고). 스키마·UI에 229를 하드코딩하지 말 것 — S-2에서 속성 확인 후 확정한다.
     - **전제 재확인**: 과거 `city_visits`를 걷어낸 이유는 "전 세계를 도시 단위로"가 무리였던 것 — 커밋 `87f9b33`("Replace city_visits with country_visits")과 `e7b5de5` 마이그레이션 주석("cities 테이블이 거의 비어 있어 v1에서 도시 선택을 강제할 수 없다")으로 교차확인. **한국 229개로 좁히면 해소되는 문제**라 재조사 불필요.
@@ -282,6 +282,25 @@
 - **RLS 검증 하네스**: `scripts/verify-friends-rls.sql` — 롤백 트랜잭션 안에서 `set local role authenticated` + `request.jwt.claims`로 특정 유저를 흉내내 정책을 실제로 검증하는 패턴(각 시나리오 결과를 temp table에 모아뒀다가 마지막에 한 번에 조회 — `supabase db query`가 멀티스테이트먼트 스크립트에서 마지막 statement 결과만 돌려주는 걸 발견해서 우회한 방식). 이후 posts/country_visits/friendships RLS를 다시 건드릴 때 이 파일을 복제해서 시나리오만 바꿔 재사용할 것. 복제본: `scripts/verify-likes-rls.sql`(Phase P), `scripts/verify-comments-rls.sql`(Phase Q-1).
   - ⭐ **verify-comments-rls.sql은 "리허설 겸 회귀" 2용도**: `[PART A]`에 마이그레이션 DDL을 인라인으로 넣어두고 통째로 rollback하므로, **db push 전에 라이브 DB에서 결과를 미리 볼 수 있다**(실데이터 무오염). push 이후엔 `[PART A]` 블록만 주석 처리하면 그대로 회귀 테스트가 된다. 앞으로 마이그레이션이 있는 작업은 이 형태를 기본으로 쓸 것.
   - ⚠️ 스크립트를 가공할 때 **PowerShell `Get-Content`/`Set-Content` 왕복 금지** — 기본 인코딩이 ANSI라 한글이 깨지면서 줄이 붙어 문법 오류가 난다(실제로 겪음). 행 단위 가공은 `sed`(바이트 안전)로 할 것.
+- ⭐ **검증 기준선 (2026-08-16 확정 — 여기가 유일한 기준, 다른 곳에 따로 적지 말 것)**:
+  > **comments 0 / post_likes 0 / 3계정 전부 public / friendships는 `test↔gp123` accepted 1행만**
+  - 나머지(참고): `posts` 7행(한국 4건), `country_visits` 4행, `profiles` 3행 — 실제 수동 테스트 데이터라 정리 대상이 **아니다**.
+  - `test↔gp123` accepted 1행은 **의도적으로 남긴다** — 2계정 가시성 검증(친구공개 글, 시군구 방문 가시성 등)에 친구 쌍이 매번 필요하다. 지우지 말 것.
+  - **⚠️ 계정 공개범위(`profiles.visibility`)는 현재 DB 상태에 의존하지 말고 검증 시나리오 초입에서 SQL로 명시적으로 세팅할 것** — Phase P에서 확정한 규칙, 기준선이 public이어도 직전 시나리오가 바꿔놨을 수 있다.
+- ⭐ **검증 후 정리 체크리스트 (에뮬 2계정 시나리오를 돌렸으면 매번 이 순서로 복구)**:
+  1. `comments` — 작성한 댓글 전부 삭제 (0행)
+  2. **`post_likes` — 누른 하트 전부 삭제 (0행)** ← 2026-08-16 추가
+  3. `profiles.visibility` — 3계정 전부 `public`으로 되돌리기
+  4. `friendships` — 검증 중 만든 pending/accepted 행 삭제, **`test↔gp123` accepted 1행만 남기기**
+  5. 테스트로 만든 `posts`가 있으면 삭제 (G-1 트리거가 `country_visits`를 알아서 정리한다 — 직접 지우지 말 것)
+  - ⚠️ **`post_likes`가 이 목록에 없었던 게 실제 누락 원인이다** (2026-08-16 발견): Phase P 검증 때 `gp123`이 자기 글에 누른 하트 2행이 3주 가까이 남아 있었다. Phase Q-3의 복구 문구에 좋아요 항목이 아예 없었던 탓 — **앞으로 새 기능을 만들면 그 기능이 만드는 행도 이 체크리스트에 추가할 것.**
+  - 같은 시기 `friendships`에도 `gp123 → mini` pending 잔재 1행(2026-07-20 Phase N/O 시절)이 남아 `mini` 프로필에 받은요청 뱃지가 계속 떠 있었다. 둘 다 2026-08-16에 정리 완료.
+  - 기준선 확인 1줄 쿼리:
+    ```
+    npx supabase db query --linked "select (select count(*) from comments) c, (select count(*) from post_likes) l, (select count(*) from profiles where visibility='public') pub, (select count(*) from friendships) fr, (select count(*) from friendships where status='accepted') fr_ok;"
+    ```
+    기대값: `c=0, l=0, pub=3, fr=1, fr_ok=1`
+  - ⚠️ `supabase db query --linked`는 **한동안 안 쓰다 처음 치면 콜드스타트로 타임아웃**(`LegacyDbConfigLoginRoleStatusError`, "Failed to create login role: Connection terminated due to connection timeout")이 난다. 프로젝트가 죽은 게 아니라 그냥 깨어나는 중이니 **한두 번 더 치면 붙는다**(2026-08-16 실제로 3번째에 정상). 참고로 `db.<ref>.supabase.co`는 IPv6 전용이라 직접 psql 접속은 이 환경에서 안 된다 — CLI의 `--linked`(Management API 경유)를 쓸 것.
 
 ## 장소 기록 방식
 
