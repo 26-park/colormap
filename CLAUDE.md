@@ -430,7 +430,10 @@ profiles, friendships, cities, country_visits, posts, post_media, post_likes, co
 
 ## 트러블슈팅 (환경 이슈 — 재발 시 시간 아끼려고 기록)
 
-- **에뮬레이터 네트워크 먹통 (앱이 `Network request failed` 반복, 2026-07-31)**: 스냅샷에서 복원된 에뮬레이터가 WiFi는 붙었는데(`wlan0` UP + IP 할당) 실제 외부 통신이 전부 실패하는 상태가 됐다. **우회책: 콜드 부팅** — `emulator.exe -avd <AVD> -no-snapshot-load -no-snapshot-save -dns-server 8.8.8.8,8.8.4.4`. 재부팅 후 정상화 확인됨.
+- **에뮬레이터 네트워크 먹통 (앱이 `Network request failed` 반복, 2026-07-31)**: 스냅샷에서 복원된 에뮬레이터가 WiFi는 붙었는데(`wlan0` UP + IP 할당) 실제 외부 통신이 전부 실패하는 상태가 됐다. **우회책: 콜드 부팅** — `emulator.exe -avd <AVD> -no-snapshot-load -no-snapshot-save -dns-server 8.8.8.8`. 재부팅 후 정상화 확인됨.
+  - ⚠️⚠️ **`-dns-server`에 값을 2개 주면 DNS가 통째로 죽는다 (2026-08-17 확인)**: `-dns-server 8.8.8.8,8.8.4.4`로 콜드 부팅하면 부팅은 되고 `dumpsys connectivity`도 **`VALIDATED`로 나오는데** 앱은 계속 `Network request failed`이고, 에뮬 안에서 `curl`을 때리면 **`Could not resolve host`** 가 나온다(연결 문제가 아니라 이름 해석 문제다). **값을 하나(`-dns-server 8.8.8.8`)로 줄이면 즉시 해결된다** — 같은 세션에서 2개 → 실패, 1개 → `HTTP 200` 재현 확인. **과거 이 문서에 적혀 있던 2개짜리 명령이 원인이었다.**
+  - ⚠️ **`adb root`로 DNS를 고치려 하지 말 것** — Play 이미지(production build)는 `adbd cannot run as root`라 `setprop net.dns1`이 막힌다. 부팅 옵션으로만 해결된다.
+  - ⚠️ **`VALIDATED`를 근거로 "네트워크 정상"이라 판단하지 말 것.** DNS만 죽어도 VALIDATED가 뜬다. 확실한 판정은 **에뮬 안에서 `adb shell curl -v https://www.google.com`** 을 때려 `Could not resolve host`인지 확인하는 것이다(단 `curl`이 000을 주는 건 권한 문제일 수도 있으니 **에러 문구까지** 볼 것).
   - ⚠️ **근본 원인은 미확정** (스냅샷 복원 상태 문제로 추정만 함). 재발하면 원인 파고들기 전에 일단 콜드 부팅으로 넘길 것.
   - ⚠️ **진단할 때 헷갈리기 쉬운 함정 2개** (실제로 여기서 오진했음):
     - `ip route`(메인 테이블)에 디폴트 라우트가 없는 건 **정상**이다. Android는 네트워크별 정책 라우팅을 써서 default가 `table 1016` 같은 별도 테이블에 들어간다 — `ip route show table all | grep default`로 봐야 한다.
