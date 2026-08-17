@@ -12,7 +12,7 @@ OSM `boundary=administrative` + `admin_level=6` 229개 + 세종특별자치시
 별도 수행한다 — 순서는 반드시 "클립 → 단순화" (README 참고):
     python clip.py <land_polygons.shp>
     npx mapshaper sgg_kr_clipped.geojson -simplify visvalingam 3% keep-shapes \
-        -o precision=0.00001 format=geojson sgg_kr_render.geojson
+        -o precision=0.00001 format=geojson sgg_kr_render.json
 
 ⚠️ 절대 여러 Overpass 인스턴스를 섞지 말 것.
    2026-08-16 수집 때 재시도를 미러(kumi.systems)로 넘겼더니 요청마다 다른

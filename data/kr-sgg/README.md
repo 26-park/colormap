@@ -59,7 +59,7 @@ FK만 두는 설계를 유지할 것.**
 | 파일 | 용도 | 크기 |
 |---|---|---|
 | `sgg_kr_raw.geojson` | **판정용 원본** (미단순화, **미클립**). PostGIS 적재본의 소스 | 7.3MB |
-| `sgg_kr_render.geojson` | **렌더링용** (해안선 클립 + 3% 단순화). APK 번들용 | 718KB |
+| `sgg_kr_render.json` | **렌더링용** (해안선 클립 + 3% 단순화). 앱이 import 한다 | 718KB |
 | `extract.py` | 추출 재현 스크립트 | — |
 | `clip.py` | 해안선 클립 재현 스크립트 | — |
 
@@ -106,7 +106,7 @@ FK만 두는 설계를 유지할 것.**
 
 ## 해안선 클립 (렌더링용)
 
-`sgg_kr_render.geojson`은 원본을 **OSM land polygons로 클립한 뒤 3% 단순화**한 것이다.
+`sgg_kr_render.json`은 원본을 **OSM land polygons로 클립한 뒤 3% 단순화**한 것이다.
 클립하지 않으면 지도에서 바다가 칠해진다.
 
 **⚠️ 순서는 "클립 → 단순화"다.** 클립하면 해안선을 따라 정점이 늘어난다
@@ -160,8 +160,11 @@ pip install pyshp shapely         # 빌드타임 도구 — 앱 의존성(packag
 python clip.py <압축푼경로>/land_polygons.shp   # -> sgg_kr_clipped.geojson
 
 npx mapshaper sgg_kr_clipped.geojson -simplify visvalingam 3% keep-shapes \
-    -o precision=0.00001 format=geojson sgg_kr_render.geojson
+    -o precision=0.00001 format=geojson sgg_kr_render.json
 ```
+
+⚠️ 렌더링본만 확장자가 `.json`이다. **Metro 는 `.geojson` 을 번들하지 못한다** —
+앱이 `import` 하는 파일이라 `.json` 이어야 한다(`countries.json` 과 같은 이유).
 
 ⚠️ **Overpass 인스턴스를 섞지 말 것.** 미러(kumi.systems)는 요청마다 다른 옛
 스냅샷을 돌려주는 경우가 있어, 인접 폴리곤이 서로 다른 시점에서 오면 공유 경계가

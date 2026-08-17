@@ -15,6 +15,9 @@ import { theme } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/auth';
 import countriesGeoJSON from '@/assets/geo/countries.json';
+// 렌더링용 시군구 경계 — 해안선 클립 + 3% 단순화본(718KB). 판정용 미클립 원본과
+// 별개 파일이다. 출처/라이선스는 data/kr-sgg/README.md 참고 (OSM, ODbL 1.0).
+import sggGeoJSON from '@/data/kr-sgg/sgg_kr_render.json';
 
 // Phase 1: 인라인 스타일 JSON — 외부 타일 없음. Phase 2에서 Tintrail 커스텀 스타일로 교체
 const MAP_STYLE = {
@@ -30,6 +33,12 @@ const MAP_STYLE = {
 };
 
 const DEFAULT_GREY = '#CDD2D8'; // 미방문 나라 기본색
+
+// S-5b: 시군구 레이어가 나타나는 줌 임계값.
+// 이 값 미만 = 나라 단위(KR도 한 덩어리로 칠함) / 이 값 이상 = 시군구 단위.
+// country-fill-kr 의 maxzoom 과 sgg 레이어들의 minzoom 에 같은 값을 써서
+// 정확히 교대시킨다 — 둘이 겹쳐 칠해지면 색이 섞인다.
+const SGG_MIN_ZOOM = 6;
 
 // 나라별 색을 매핑하는 fill-color match 표현식 빌더
 function buildFillColor(visited: Record<string, string>) {
@@ -105,15 +114,42 @@ export default function MapScreen() {
           data={countriesGeoJSON as any} // TODO: FeatureCollection 타입으로 교체
           onPress={handleCountryPress}
         >
+          {/* 한국 외 나라 — 줌과 무관하게 항상 나라 단위로 칠한다 */}
           <Layer
             id="country-fill"
             type="fill"
+            filter={['!=', ['get', 'cc'], 'KR'] as any}
+            paint={{ 'fill-color': buildFillColor(visitedMap) as any, 'fill-opacity': 1 }}
+          />
+          {/* 한국만 분리 — SGG_MIN_ZOOM 부터는 시군구 레이어가 대신 칠하므로 여기서 끝난다 */}
+          <Layer
+            id="country-fill-kr"
+            type="fill"
+            filter={['==', ['get', 'cc'], 'KR'] as any}
+            maxzoom={SGG_MIN_ZOOM}
             paint={{ 'fill-color': buildFillColor(visitedMap) as any, 'fill-opacity': 1 }}
           />
           <Layer
             id="country-border"
             type="line"
             paint={{ 'line-color': '#FFFFFF', 'line-width': 0.8 }}
+          />
+        </GeoJSONSource>
+
+        {/* 시군구 — countries 소스 뒤에 오므로 위에 그려진다.
+            S-5b 단계에서는 색칠 바인딩 없이 회색+윤곽만 (색은 S-5c). */}
+        <GeoJSONSource id="sgg" data={sggGeoJSON as any}>
+          <Layer
+            id="sgg-fill"
+            type="fill"
+            minzoom={SGG_MIN_ZOOM}
+            paint={{ 'fill-color': DEFAULT_GREY, 'fill-opacity': 1 }}
+          />
+          <Layer
+            id="sgg-line"
+            type="line"
+            minzoom={SGG_MIN_ZOOM}
+            paint={{ 'line-color': '#FFFFFF', 'line-width': 0.6 }}
           />
         </GeoJSONSource>
       </Map>
