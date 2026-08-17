@@ -444,6 +444,7 @@ profiles, friendships, cities, country_visits, posts, post_media, post_likes, co
 - 언어: TypeScript (strict 지향)
 - 한 번에 거대한 변경 말고, 작은 단위로 나눠서 작업하고 설명할 것
 - 권한·보안 관련 코드는 특히 신중하게, RLS와 일관되게
+- ⚠️ **트리거를 새로 만들면 그 이전에 생성된 데이터는 반응하지 않는다. 트리거 마이그레이션에는 항상 멱등 backfill을 짝으로 붙일 것.** 검증 스크립트는 자기가 만든 데이터로만 트리거를 확인하므로 이 공백을 구조적으로 못 잡는다 — **실제 테이블 행수를 별도로 확인할 것.** (S-4에서 `sgg_visits` 0행으로 실제 발생)
 - 비밀키 주의: `anon` 키만 앱에. `service_role` 키는 절대 앱 코드/레포에 넣지 말 것
 - `.env`는 `.gitignore`에 포함 (커밋 금지)
 - 커밋 메시지는 간결한 conventional 스타일 (feat:, fix:, chore: 등)
