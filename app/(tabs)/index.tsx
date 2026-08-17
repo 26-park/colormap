@@ -50,6 +50,20 @@ const INITIAL_ZOOM = 1;
 const ZOOM_STEP = 1;
 const ZOOM_ANIM_MS = 300;
 
+// 시군구 색 매핑. 나라와 같은 match 구조지만 키가 osm_id(숫자)다.
+// ⭐ sgg_code 를 키로 쓰면 안 된다 — 2026-07 신설된 인천 4개 구는 코드가 아직
+//    null 이라 영영 색칠되지 않는다. osm_id 는 230개 전부 갖고 있다.
+function buildSggFillColor(visited: Record<number, string>) {
+  const entries = Object.entries(visited);
+  if (entries.length === 0) return DEFAULT_GREY;
+  return [
+    'match',
+    ['get', 'osm_id'],
+    ...entries.flatMap(([osmId, color]) => [Number(osmId), color]),
+    DEFAULT_GREY,
+  ];
+}
+
 // 나라별 색을 매핑하는 fill-color match 표현식 빌더
 function buildFillColor(visited: Record<string, string>) {
   const entries = Object.entries(visited);
@@ -67,6 +81,7 @@ export default function MapScreen() {
   const router = useRouter();
   const { session } = useAuth();
   const [visitedMap, setVisitedMap] = useState<Record<string, string>>({});
+  const [sggVisitedMap, setSggVisitedMap] = useState<Record<number, string>>({});
   const [colorLoadError, setColorLoadError] = useState(false);
 
   const mapRef = useRef<MapRef>(null);
@@ -112,7 +127,40 @@ export default function MapScreen() {
       });
   }, [session?.user.id]);
 
-  useFocusEffect(loadVisited);
+  // 시군구 색칠. country_visits 와 같은 패턴이되 sgg 를 조인해 osm_relation_id 를
+  // 받아온다 — 렌더링 GeoJSON 의 osm_id 와 이걸로 맞춘다.
+  // 조용한 실패 금지: 실패하면 기존 배너(colorLoadError)를 그대로 쓴다.
+  const loadSggVisited = useCallback(() => {
+    const userId = session?.user.id;
+    if (!userId) return;
+
+    supabase
+      .from('sgg_visits')
+      .select('color, sgg(osm_relation_id)')
+      .eq('user_id', userId)
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('sgg_visits 조회 실패:', error);
+          setColorLoadError(true);
+          return;
+        }
+        const map: Record<number, string> = {};
+        for (const row of (data ?? []) as any[]) {
+          // PostgREST 는 임베드를 객체로도 배열로도 돌려준다(Phase Q-3 와 같은 함정).
+          const embedded = Array.isArray(row.sgg) ? row.sgg[0] : row.sgg;
+          const osmId = embedded?.osm_relation_id;
+          if (osmId != null) map[Number(osmId)] = row.color;
+        }
+        setSggVisitedMap(map);
+      });
+  }, [session?.user.id]);
+
+  const loadAllVisited = useCallback(() => {
+    loadVisited();
+    loadSggVisited();
+  }, [loadVisited, loadSggVisited]);
+
+  useFocusEffect(loadAllVisited);
 
   function handleCountryPress(event: NativeSyntheticEvent<PressEventWithFeatures>) {
     const feature = event.nativeEvent.features[0];
@@ -177,7 +225,7 @@ export default function MapScreen() {
             id="sgg-fill"
             type="fill"
             minzoom={SGG_MIN_ZOOM}
-            paint={{ 'fill-color': DEFAULT_GREY, 'fill-opacity': 1 }}
+            paint={{ 'fill-color': buildSggFillColor(sggVisitedMap) as any, 'fill-opacity': 1 }}
           />
           <Layer
             id="sgg-line"

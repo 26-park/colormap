@@ -277,6 +277,15 @@
       - `@/*`가 프로젝트 루트 매핑이라 `data/`에서 바로 import 된다 — `assets/`로 파일을 복사할 필요 없다(중복 방지).
       - **성능 실측**: 팬 8회 + 줌 4회 연속 조작 중 **Choreographer 프레임 드롭 0건**, MapLibre 경고 0건. 에셋 URL 방식·`tolerance` 조정 **불필요**로 판단.
       - ⚠️ **`dumpsys gfxinfo`는 이 앱의 지도 성능 측정에 쓸 수 없다** — MapLibre가 자체 GL 스레드로 그려서 Android UI 프레임 파이프라인에 안 잡힌다(격렬하게 조작해도 "Total frames rendered: 2"). **`Choreographer: Skipped N frames` 로그가 유효한 지표다.**
+    - **S-5b+ 줌 버튼 기능 연결 (2026-08-17)**: 우측 `+`/`−`는 **원래 우리 커스텀 UI인데 `onPress`가 아예 없어서** 동작하지 않던 것이었다(MapLibre 기본 컨트롤이 아님 — 우하단 로고·ⓘ만 라이브러리 ornament). `mapRef.getZoom()` + `cameraRef.zoomTo(next, { duration: 300 })`, Camera에 `minZoom`/`maxZoom`.
+      - ⭐ **연타는 "무시"가 아니라 "누적"으로 처리한다**: `targetZoomRef`에 진행 중 애니메이션의 **목표**를 담아두고 다음 탭이 그 위에 쌓는다. 이게 없으면 두 번째 탭이 아직 안 끝난 애니메이션의 **중간값**을 읽어 한 단계를 까먹는다. 실측 확인: + 4연타 = 정확히 4단계.
+      - 한계에서는 `next === current`로 조기 return — 무반응이고 크래시 없다. 버튼은 `disabled` + opacity 0.3.
+    - **S-5c 완료 (2026-08-17)** — 시군구 색칠 바인딩. `sgg_visits`를 `sgg`와 조인해 `osm_relation_id`를 받아 `['match', ['get','osm_id'], …]`로 `fill-color`를 만든다(나라의 `['get','cc']`와 동형).
+      - ⭐ **키는 `osm_id`다. `sgg_code`를 쓰면 안 된다** — 2026-07 신설된 인천 4개 구는 코드가 `null`이라 영영 색칠되지 않는다. `osm_id`는 230개 전부 갖고 있다.
+      - 쿼리는 **`.select('color, sgg(osm_relation_id)')`** — 대상 테이블 이름이 그대로 `sgg`라 별칭이 불필요하다. **임베드는 객체/배열 양쪽을 흡수**할 것(Phase Q-3의 `normalizeAuthor`와 같은 함정).
+      - `useFocusEffect`는 나라+시군구를 함께 부르는 `loadAllVisited`로 묶었고, 실패 시 기존 색칠 에러 배너를 재사용한다(조용한 실패 금지).
+      - **검증(에뮬)**: 줌 6 경계 교대가 **제스처·+버튼 양쪽 모두** 정상(KR 한 덩어리 ↔ 230개, 겹침 없음) / `test` 계정은 전부 회색 / `test`에 임시 `sgg_visits` 1행을 넣자 **종로구만 주황**으로 정확히 렌더된 뒤 삭제·기준선 복구.
+      - ⚠️ **검증 중 세션이 JWT 만료(`PGRST303`)로 죽었고 `adb shell pm clear` 도 세션을 못 지웠다**(Success를 반환하는데도 남음 — Android 자동 백업 복원으로 추정). 계정을 바꾸려면 **앱 안에서 설정 → 로그아웃**을 쓸 것.
     - **⚠️ 가시성 — 설계 단계부터 반영 필수**: `country_visits` 하드닝(Phase N)에서 잡은 누출("비공개 글만 있는 나라도 방문 사실이 샘")이 그대로 재발할 자리다. 시군구 방문 테이블의 SELECT 정책은 **반드시 `can_view_post` 경유**로 만든다(조건 복붙 금지 — "권한/가시성 모델" 섹션 규칙). INSERT/UPDATE도 `country_visits_insert_requires_post`와 같은 exists 조건이 필요하고, **생성·삭제는 트리거 전담·앱은 색만 UPDATE**라는 G-1/G-2 원칙을 그대로 상속한다. 인덱스는 `posts(sgg_id, user_id)`가 그 서브쿼리에 맞는다(Phase N에서 `posts_country_idx`가 그랬듯).
     - **저장 구조**: 옛 `city_visits`를 되살리지 않고 **새 테이블로 간다**(옛 스키마는 전 세계 `cities` FK 전제라 지금 모델과 안 맞음). **이중 구조** — 한국 게시물은 `country_visits`(KR)도 칠하고 시군구도 칠한다. 세계지도 나라 단위 유지가 확정이라 KR 칠이 사라지면 안 된다.
     - **backfill 부담 없음**: 라이브 기준 전체 게시물 7건 중 한국 4건.
