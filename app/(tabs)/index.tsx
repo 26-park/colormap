@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { StyleSheet, View, TouchableOpacity, type NativeSyntheticEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -8,6 +8,8 @@ import {
   Camera,
   GeoJSONSource,
   Layer,
+  type CameraRef,
+  type MapRef,
   type PressEventWithFeatures,
 } from '@maplibre/maplibre-react-native';
 import { Text } from '@/components/AppText';
@@ -40,6 +42,14 @@ const DEFAULT_GREY = '#CDD2D8'; // 미방문 나라 기본색
 // 정확히 교대시킨다 — 둘이 겹쳐 칠해지면 색이 섞인다.
 const SGG_MIN_ZOOM = 6;
 
+// 줌 버튼 동작 범위. 최소값은 초기 세계뷰(zoom 1)와 맞춘다 — 이보다 더 빼면
+// 지도가 화면보다 작아져 빈 배경만 늘어난다.
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 16;
+const INITIAL_ZOOM = 1;
+const ZOOM_STEP = 1;
+const ZOOM_ANIM_MS = 300;
+
 // 나라별 색을 매핑하는 fill-color match 표현식 빌더
 function buildFillColor(visited: Record<string, string>) {
   const entries = Object.entries(visited);
@@ -58,6 +68,22 @@ export default function MapScreen() {
   const { session } = useAuth();
   const [visitedMap, setVisitedMap] = useState<Record<string, string>>({});
   const [colorLoadError, setColorLoadError] = useState(false);
+
+  const mapRef = useRef<MapRef>(null);
+  const cameraRef = useRef<CameraRef>(null);
+  // 버튼 비활성 판정용. 이동이 끝날 때만 갱신되므로 애니메이션 도중 값은 아니다.
+  const [zoom, setZoom] = useState(INITIAL_ZOOM);
+  // 연타 대비 — 진행 중인 애니메이션의 "목표" 줌. 이게 없으면 두 번째 탭이
+  // 아직 안 끝난 첫 애니메이션의 중간값을 기준으로 계산해 한 단계를 까먹는다.
+  const targetZoomRef = useRef<number | null>(null);
+
+  const handleZoomBy = useCallback(async (delta: number) => {
+    const current = targetZoomRef.current ?? (await mapRef.current?.getZoom()) ?? zoom;
+    const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, current + delta));
+    if (next === current) return; // 한계 도달 — 무반응(크래시 없음)
+    targetZoomRef.current = next;
+    cameraRef.current?.zoomTo(next, { duration: ZOOM_ANIM_MS });
+  }, [zoom]);
 
   // 지도 탭이 포커스될 때마다 재조회 — 나라상세에서 색 바꾸고 돌아오면 즉시 반영.
   // 재조회 중에도 기존 visitedMap을 유지하다 새 데이터 도착 시 교체(깜빡임 없음).
@@ -101,11 +127,20 @@ export default function MapScreen() {
     <View style={styles.container}>
       {/* 지도 — 컨테이너 전체를 채움 */}
       <Map
+        ref={mapRef}
         style={StyleSheet.absoluteFillObject}
         mapStyle={MAP_STYLE as any} // TODO: StyleSpecification 타입으로 교체
+        onRegionDidChange={(e) => {
+          // 제스처로 움직였을 수도 있으므로 실제값 기준으로 목표를 리셋한다.
+          setZoom(e.nativeEvent.zoom);
+          targetZoomRef.current = null;
+        }}
       >
         <Camera
-          initialViewState={{ center: [0, 20], zoom: 1 }}
+          ref={cameraRef}
+          initialViewState={{ center: [0, 20], zoom: INITIAL_ZOOM }}
+          minZoom={MIN_ZOOM}
+          maxZoom={MAX_ZOOM}
         />
         {/* 색칠은 feature-state가 아니라 fill-color match(['get','cc'])로 처리 —
             promoteId는 설치된 v11.3.6 GeoJSONSourceProps에 없어 넣어도 무시된다 (CLAUDE.md 참고) */}
@@ -136,8 +171,7 @@ export default function MapScreen() {
           />
         </GeoJSONSource>
 
-        {/* 시군구 — countries 소스 뒤에 오므로 위에 그려진다.
-            S-5b 단계에서는 색칠 바인딩 없이 회색+윤곽만 (색은 S-5c). */}
+        {/* 시군구 — countries 소스 뒤에 오므로 위에 그려진다. */}
         <GeoJSONSource id="sgg" data={sggGeoJSON as any}>
           <Layer
             id="sgg-fill"
@@ -180,14 +214,28 @@ export default function MapScreen() {
         )}
       </View>
 
-      {/* ── 우측 줌 버튼 (정적 — 기능은 다음 Phase) ── */}
+      {/* ── 우측 줌 버튼 ── */}
       <View style={styles.zoomContainer}>
-        <TouchableOpacity style={styles.zoomBtn}>
-          <Text style={styles.zoomBtnText}>+</Text>
+        <TouchableOpacity
+          style={styles.zoomBtn}
+          onPress={() => void handleZoomBy(ZOOM_STEP)}
+          disabled={zoom >= MAX_ZOOM}
+          accessibilityLabel="확대"
+        >
+          <Text style={[styles.zoomBtnText, zoom >= MAX_ZOOM && styles.zoomBtnTextDisabled]}>
+            +
+          </Text>
         </TouchableOpacity>
         <View style={styles.zoomDivider} />
-        <TouchableOpacity style={styles.zoomBtn}>
-          <Text style={styles.zoomBtnText}>−</Text>
+        <TouchableOpacity
+          style={styles.zoomBtn}
+          onPress={() => void handleZoomBy(-ZOOM_STEP)}
+          disabled={zoom <= MIN_ZOOM}
+          accessibilityLabel="축소"
+        >
+          <Text style={[styles.zoomBtnText, zoom <= MIN_ZOOM && styles.zoomBtnTextDisabled]}>
+            −
+          </Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -298,6 +346,9 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     fontFamily: theme.fonts.regular,
     lineHeight: 26,
+  },
+  zoomBtnTextDisabled: {
+    opacity: 0.3,
   },
   zoomDivider: {
     height: StyleSheet.hairlineWidth,
