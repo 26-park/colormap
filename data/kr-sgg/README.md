@@ -8,10 +8,15 @@
 > Open Database License (ODbL) v1.0 — https://opendatacommons.org/licenses/odbl/1-0/
 > https://www.openstreetmap.org/copyright
 
-- **원본**: OpenStreetMap (Overpass API)
-- **추출일**: 2026-08-17 (OSM 스냅샷 `osm_base = 2026-08-17T04:xx:xxZ`)
+**소스는 두 개이고 둘 다 OpenStreetMap / ODbL이다.**
+
+| 소스 | 용도 | 취득일 |
+|---|---|---|
+| OSM 행정경계 (Overpass API, `admin_level=6` + 세종 `admin_level=4`) | 시군구 경계 | 2026-08-17 (스냅샷 `osm_base = 2026-08-17T04:xx:xxZ`) |
+| [OSM land polygons](https://osmdata.openstreetmap.de/data/land-polygons.html) (`land-polygons-complete-4326`) | 해안선 클립 | 2026-08-17 |
+
 - **가공 내용**: 관계(relation) 멤버 way를 링으로 조립 → GeoJSON(MultiPolygon) 변환,
-  울산 5개 시군구의 행정구역코드 수기 보정, 렌더링용 사본은 좌표 단순화.
+  울산 5개 시군구의 행정구역코드 수기 보정, 렌더링용 사본은 **해안선 클립 + 좌표 단순화**.
   → 이 가공물은 ODbL상 **Derivative Database**에 해당한다.
 
 ## ODbL 준수 방법 (중요)
@@ -53,9 +58,10 @@ FK만 두는 설계를 유지할 것.**
 
 | 파일 | 용도 | 크기 |
 |---|---|---|
-| `sgg_kr_raw.geojson` | **판정용 원본** (미단순화, 미클립). PostGIS 적재본의 소스 | 7.3MB |
-| `sgg_kr_simplified10.geojson` | **렌더링용** 10% 단순화본. 아직 해안선 미클립 | 629KB |
+| `sgg_kr_raw.geojson` | **판정용 원본** (미단순화, **미클립**). PostGIS 적재본의 소스 | 7.3MB |
+| `sgg_kr_render.geojson` | **렌더링용** (해안선 클립 + 3% 단순화). APK 번들용 | 718KB |
 | `extract.py` | 추출 재현 스크립트 | — |
+| `clip.py` | 해안선 클립 재현 스크립트 | — |
 
 ### 속성
 
@@ -83,10 +89,12 @@ FK만 두는 설계를 유지할 것.**
 
 ## 알려진 특성 / 주의사항
 
-- **⚠️ 해상 경계를 포함한다.** 전체 면적 합이 179,728km²로 남한 국토(약 100,400km²)의
-  1.8배다. 내륙 시군구는 실측치와 일치하지만(부산진구 29.5 / 실제 29.7km²) 연안은
-  바다까지 뻗는다(군산시 4,162 / 육지 396km²).
-  → **판정용은 미클립 유지**(해변·선상 좌표가 NULL이 되지 않게), **렌더링용만 클립**한다.
+- **⚠️ 원본(`sgg_kr_raw.geojson`)은 해상 경계를 포함한다.** 전체 면적 합이 179,728km²로
+  남한 국토(약 100,400km²)의 1.8배다. 내륙 시군구는 실측치와 일치하지만
+  (부산진구 29.5 / 실제 29.7km²) 연안은 바다까지 뻗는다(군산시 4,162 / 육지 396km²).
+  → **⭐ 판정용(PostGIS 적재본)은 미클립을 유지한다.** 해변·부두·선상에서 찍은 좌표가
+  `sgg_id` NULL로 떨어지면 안 되고, 관할 해역은 행정적으로도 그 시군구 소관이다.
+  **클립본을 PostGIS에 넣지 말 것.**
 - **미세 파트는 실제 월경지다.** 부산진구 조각이 동구 안에, 군산시 조각 2개가 부안군
   안에 있다(400~11,400m²). 단순화하면 사라진다(파트 240→235) — 버그가 아니다.
 - **인천 신설 4개(제물포·영종·서해·검단)는 `sgg_code`가 `null`이다.** 2026-07-01
@@ -96,13 +104,63 @@ FK만 두는 설계를 유지할 것.**
 - **울산 5개는 수기 보정분**(`code_source='manual'`)이다. 갱신 시 OSM에 코드가
   붙었는지 재확인할 것.
 
+## 해안선 클립 (렌더링용)
+
+`sgg_kr_render.geojson`은 원본을 **OSM land polygons로 클립한 뒤 3% 단순화**한 것이다.
+클립하지 않으면 지도에서 바다가 칠해진다.
+
+**⚠️ 순서는 "클립 → 단순화"다.** 클립하면 해안선을 따라 정점이 늘어난다
+(좌표 269,912 → 785,759, 파트 240 → 4,262). 그래서 클립 전 기준으로 잡은 단순화
+레벨은 그대로 통하지 않는다 — 실제로 "10% = 629KB"였던 것이 클립 후 2.10MB가 됐다.
+
+**⭐ 920MB를 메모리에 올리지 않는 방법**: 셰이프파일은 폴리곤 레코드마다 bbox를
+저장하므로, `pyshp`로 스트리밍하며 한국 bbox(124.0~132.5E, 32.5~39.0N)에 걸치는
+레코드만 고르면 된다(83만개 중 17,696개). GDAL/ogr2ogr 없이 처리된다.
+육지 union은 4분쯤 걸려 `land_kr_union.wkb`로 캐시한다.
+
+### 3% 선택 근거
+
+| 레벨 | 크기 | gzip | 최대 개별오차 | 신안군 섬(원본 792) | 도심 자치구 오차 |
+|---|---|---|---|---|---|
+| 10% | 2.10MB | 594KB | 1.0% | 282 | ≤0.4% |
+| 5% | 1.12MB | 315KB | 2.0% | 158 | ≤0.9% |
+| **3%** | **718KB** | **196KB** | **3.5%** | **95** | **≤1.4%** |
+| 2% | 511KB | 136KB | 5.8% | 71 | ≤2.2% |
+
+⚠️ **클립 후에는 판정 기준이 바뀐다.** 클립 전에는 작은 도심 자치구(서울 중구 4km²)가
+먼저 무너져 3%에서 31.7% 오차였지만, 클립 후에는 3%에서도 ≤1.4%다 — 전체 좌표가
+3배로 늘어 같은 %가 훨씬 덜 공격적이기 때문. 대신 **군도(신안군 792섬·옹진군 159섬·
+통영시)의 섬 손실**이 새 제약이 된다. `keep-shapes`는 피처가 통째로 사라지는 것만
+막고 개별 파트는 지킨다.
+
+### ⚠️ 새만금·시화호 초과분은 오류가 아니다
+
+클립 후에도 몇몇 서해안 시군이 공표 면적보다 크다. 원인이 특정돼 있다:
+
+| 김제 | 군산 | 부안 | 안산 | 서산 | 화성 | 제주시 | 통영 |
+|---|---|---|---|---|---|---|---|
+| +110 | +116 | +87 | +39 | −3 | −5 | +0 | +5 |
+
+초과가 큰 셋(김제·군산·부안, 합 +313km²)은 **전부 새만금**이고 안산 +39는 **시화호**다.
+다른 연안 시군은 실제값과 거의 일치한다. OSM 해안선이 **방조제를 따라 그려져 방조제
+안쪽 물이 육지 쪽으로 잡히는 것**이며, 그 구역은 행정적으로 해당 시군 관할이므로
+색칠 지도에서는 오히려 맞는 동작이다. **이걸 버그로 오인해 고치려 하지 말 것.**
+
+전체 합계는 179,728 → **100,703km²** (남한 국토 약 100,400, 오차 0.3%).
+
 ## 재현
 
 ```bash
 cd data/kr-sgg
 python extract.py                 # 수집 -> 스냅샷 검사 -> 조립 -> sgg_kr_raw.geojson
-npx mapshaper sgg_kr_raw.geojson -simplify visvalingam 10% keep-shapes \
-    -o precision=0.00001 format=geojson sgg_kr_simplified10.geojson
+
+# 해안선 클립 (land-polygons-complete-4326.zip 920MB 선다운로드 필요)
+#   https://osmdata.openstreetmap.de/download/land-polygons-complete-4326.zip
+pip install pyshp shapely         # 빌드타임 도구 — 앱 의존성(package.json) 아님
+python clip.py <압축푼경로>/land_polygons.shp   # -> sgg_kr_clipped.geojson
+
+npx mapshaper sgg_kr_clipped.geojson -simplify visvalingam 3% keep-shapes \
+    -o precision=0.00001 format=geojson sgg_kr_render.geojson
 ```
 
 ⚠️ **Overpass 인스턴스를 섞지 말 것.** 미러(kumi.systems)는 요청마다 다른 옛

@@ -228,7 +228,7 @@
         - **⭐ 권장 10%** — 오차가 큰 쪽은 항상 **작은 도심 자치구**(서울 중구 4.1km²)라 총면적이 아니라 **이 최소 단위가 판정 기준**이다. 3%에서 서울 중구가 31.7% 깎여 탈락. 용량이 문제되면 5%(최대 7.1%)까지가 한계선.
       - **코드 보정 결과**: `ref:KR:mois:admin` 보유 **226/230**, 중복 0. 울산 5개는 **osm_id로 못박아** 수기 보정(`31110`중구/`31140`남구/`31170`동구/`31200`북구/`31710`울주군 — 이름 중복 때문에 이름으로 매칭하면 위험)하고 `code_source='manual'`로 표시.
       - **⏸️ 인천 신설 4개(제물포·영종·서해·검단) 코드는 보류 확정 (2026-08-16)**: MOIS 고시 코드를 못 찾아 `sgg_code=null`로 둔다. **surrogate id 설계라 아무것도 막지 않는다** — 결측 상태로 S-3 이후를 그대로 진행하고, 나중에 [행정표준코드관리시스템](https://www.code.go.kr/stdcode/regCodeL.do)에서 확인해 채운다. **추측한 코드를 넣지 말 것(틀린 코드가 NULL보다 나쁘다).** 그래서 `sgg_code`는 NOT NULL이면 안 된다.
-      - **커밋 산출물** (`data/kr-sgg/`): `sgg_kr_raw.geojson`(7.3MB, 판정용 원본) / `sgg_kr_simplified10.geojson`(629KB, 렌더링용·**미클립**) / `extract.py`(재현 스크립트 — 엔드포인트 고정 + `osm_base` 일관성 검사 내장) / `README.md`(**ODbL 고지 = 4.2+4.6 충족 지점**). ⚠️ 앱 번들용이 아니므로 `assets/`가 아니라 `data/`에 둔다(Metro 번들 오염 방지).
+      - **커밋 산출물** (`data/kr-sgg/`): `sgg_kr_raw.geojson`(7.3MB, **판정용 원본·미클립**) / `sgg_kr_render.geojson`(718KB, **렌더링용·클립+3% 단순화**, S-5a에서 추가) / `extract.py`·`clip.py`(재현 스크립트) / `load_to_db.py` / `README.md`(**ODbL 고지 = 4.2+4.6 충족 지점**). ⚠️ 앱 번들용이 아니므로 `assets/`가 아니라 `data/`에 둔다(Metro 번들 오염 방지).
     - **S-3 완료 (2026-08-16, 마이그레이션 `20260816100000_sgg_boundaries.sql`)** — 경계 테이블 + `posts.sgg_id` + 서버측 판정 트리거.
       - **`sgg` 테이블**: `id`(uuid surrogate PK) / `osm_relation_id`(unique, **갱신 시 매칭 키**) / `sgg_code`(char(5), **nullable**) / `name` / `admin_level`(4 또는 6) / `code_source`(`osm`|`manual`|null) / `geom`(**geography(MultiPolygon,4326), 미클립 원본**). 인덱스 = GIST(geom) + `sgg_code` 부분 unique(`where sgg_code is not null` — 코드 없는 4행이 서로 충돌하면 안 되므로).
       - **RLS**: `sgg_select_all using(true)` + `grant select to authenticated`만. **쓰기 정책을 아예 만들지 않는 것으로 앱의 쓰기를 차단**한다(검증 C2/C3로 실증).
@@ -262,6 +262,14 @@
         | ✅ 우리 정책 (`can_view_post` 경유) | 0 |
         - **`exists(posts …)` 서브쿼리는 그 자체로 posts RLS를 탄다 — `post_likes`, `comments`에 이어 `sgg_visits`에서 세 번째로 실측 확인. `can_view_post` 명시 호출은 이중 방어이자, posts 정책 변경 시 영향 범위를 grep으로 추적 가능하게 하는 장치.**
         - ⚠️ 그러므로 **"`can_view_post`를 안 부르면 샌다"고 오해하지 말 것.** 실제로 새는 형태는 **posts 조건 자체가 없는 정책**이다(Phase N 이전의 `country_visits`가 그랬다).
+    - **S-5a 완료 (2026-08-17)** — 해안선 클립 + 3% 재단순화. 앱 코드 변경 없음, 산출물은 `data/kr-sgg/sgg_kr_render.geojson`(718KB). 상세는 `data/kr-sgg/README.md`가 정본.
+      - **클립 소스**: OSM land polygons(`land-polygons-complete-4326`, 920MB, ODbL) — 경계와 같은 소스라 정합이 맞는다.
+      - **⭐ 920MB를 메모리에 안 올리는 방법**: 셰이프파일은 **폴리곤 레코드마다 bbox를 저장**하므로 `pyshp`로 스트리밍하며 한국 bbox에 걸치는 것만 고르면 된다(83만 중 17,696개, 51초). **GDAL/ogr2ogr 없이 처리된다** — 이 PC엔 GDAL이 없어서 이게 결정적이었다. 육지 union은 4분이라 `land_kr_union.wkb`로 캐시.
+      - **빌드타임 의존성**: `pip install pyshp shapely`. **앱 의존성이 아니다(`package.json` 무관).**
+      - **⚠️ 클립하면 정점이 는다 — S-2 기준이 무너졌다**: 좌표 269,912 → 785,759(2.9배), 파트 240 → 4,262(섬이 개별 폴리곤이 됨). **"10% = 629KB"였던 것이 클립 후 2.10MB.** 순서는 반드시 **클립 → 단순화**이고, 클립본 기준으로 용량을 다시 재야 한다.
+      - **⚠️ 판정 기준도 바뀐다**: 클립 전엔 작은 도심 자치구(서울 중구)가 먼저 무너졌는데(3%에서 31.7%), 클립 후엔 3%에서도 ≤1.4%다(전체 좌표가 3배라 같은 %가 덜 공격적). 대신 **군도의 섬 손실**(신안군 792섬)이 새 제약 — `keep-shapes`는 피처 소멸만 막고 개별 파트는 못 지킨다.
+      - **면적 검증**: 총합 179,728 → **100,703km²**(남한 국토 약 100,400, 오차 0.3%). 230개 유지, 빈 결과 0, 열린 링 0. 내륙은 한 좌표도 안 건드려짐(부산진구 29.5 그대로).
+      - **⚠️ 새만금·시화호 초과분은 오류가 아니다**: 클립 후에도 김제 +110 / 군산 +116 / 부안 +87(합 +313km² = 새만금) / 안산 +39(시화호)로 공표 면적보다 크다. **OSM 해안선이 방조제를 따라 그려져 안쪽 물이 육지 쪽으로 잡히는 것**이고 그 구역은 행정적으로 해당 시군 관할이다. 다른 연안 시군(서산 −3, 화성 −5, 제주시 +0)은 실제값과 일치한다. **버그로 오인해 고치려 하지 말 것.**
     - **⚠️ 가시성 — 설계 단계부터 반영 필수**: `country_visits` 하드닝(Phase N)에서 잡은 누출("비공개 글만 있는 나라도 방문 사실이 샘")이 그대로 재발할 자리다. 시군구 방문 테이블의 SELECT 정책은 **반드시 `can_view_post` 경유**로 만든다(조건 복붙 금지 — "권한/가시성 모델" 섹션 규칙). INSERT/UPDATE도 `country_visits_insert_requires_post`와 같은 exists 조건이 필요하고, **생성·삭제는 트리거 전담·앱은 색만 UPDATE**라는 G-1/G-2 원칙을 그대로 상속한다. 인덱스는 `posts(sgg_id, user_id)`가 그 서브쿼리에 맞는다(Phase N에서 `posts_country_idx`가 그랬듯).
     - **저장 구조**: 옛 `city_visits`를 되살리지 않고 **새 테이블로 간다**(옛 스키마는 전 세계 `cities` FK 전제라 지금 모델과 안 맞음). **이중 구조** — 한국 게시물은 `country_visits`(KR)도 칠하고 시군구도 칠한다. 세계지도 나라 단위 유지가 확정이라 KR 칠이 사라지면 안 된다.
     - **backfill 부담 없음**: 라이브 기준 전체 게시물 7건 중 한국 4건.
