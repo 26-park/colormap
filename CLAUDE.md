@@ -268,6 +268,7 @@
         | ✅ 우리 정책 (`can_view_post` 경유) | 0 |
         - **`exists(posts …)` 서브쿼리는 그 자체로 posts RLS를 탄다 — `post_likes`, `comments`에 이어 `sgg_visits`에서 세 번째로 실측 확인. `can_view_post` 명시 호출은 이중 방어이자, posts 정책 변경 시 영향 범위를 grep으로 추적 가능하게 하는 장치.**
         - ⚠️ 그러므로 **"`can_view_post`를 안 부르면 샌다"고 오해하지 말 것.** 실제로 새는 형태는 **posts 조건 자체가 없는 정책**이다(Phase N 이전의 `country_visits`가 그랬다).
+        - ⭐ **시군구 상세의 "모두" 탭이 posts RLS(`can_view_post`)가 화면을 통해 검증된 첫 지점이다** (S-6b 2계정 실측: 의성군 private 차단 + 충주시 public 노출 대조). **`sgg_visits` 정책은 여전히 잠자는 방어** — 남의 지도/프로필을 보는 화면이 생길 때 깨어난다.
     - **S-5a 완료 (2026-08-17)** — 해안선 클립 + 3% 재단순화. 앱 코드 변경 없음, 산출물은 `data/kr-sgg/sgg_kr_render.geojson`(718KB). 상세는 `data/kr-sgg/README.md`가 정본.
       - **클립 소스**: OSM land polygons(`land-polygons-complete-4326`, 920MB, ODbL) — 경계와 같은 소스라 정합이 맞는다.
       - **⭐ 920MB를 메모리에 안 올리는 방법**: 셰이프파일은 **폴리곤 레코드마다 bbox를 저장**하므로 `pyshp`로 스트리밍하며 한국 bbox에 걸치는 것만 고르면 된다(83만 중 17,696개, 51초). **GDAL/ogr2ogr 없이 처리된다** — 이 PC엔 GDAL이 없어서 이게 결정적이었다. 육지 union은 4분이라 `land_kr_union.wkb`로 캐시.

@@ -1,14 +1,25 @@
-import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Dimensions,
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Text } from '@/components/AppText';
 import { theme } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/context/auth';
+import { resolveMediaUrls } from '@/lib/media';
 import { getSidoNameKo } from '@/lib/sidoNamesKo';
 import { ErrorView } from '@/components/ErrorView';
 
-// Phase S-6a: 시군구 상세 뼈대.
+// Phase S-6a/S-6b: 시군구 상세.
 //
 // ⭐ 라우트 키가 osm_id(= sgg.osm_relation_id)인 이유: 지도가 탭 순간 손에 쥐는
 //    값이 렌더 GeoJSON 의 properties.osm_id 뿐이라, uuid 로 라우팅하려면 push 전에
@@ -18,7 +29,11 @@ import { ErrorView } from '@/components/ErrorView';
 //
 // 화면 안에서 쓰는 실제 참조 키는 sgg.id(uuid)다 — posts.sgg_id / sgg_visits.sgg_id
 // 가 그걸 가리킨다. 그래서 진입 직후 osm_relation_id → 행 단건 조회로 uuid 를 얻고,
-// 이후 쿼리(S-6b 그리드 / S-6c 색 선택)는 전부 uuid 로 나간다.
+// 이후 쿼리(그리드 / S-6c 색 선택)는 전부 uuid 로 나간다.
+
+const GRID_GAP = 1;
+const NUM_COLS = 3;
+const SCREEN_WIDTH = Dimensions.get('window').width;
 
 type SggRow = {
   id: string;
@@ -27,9 +42,16 @@ type SggRow = {
   name: string;
 };
 
+type GridPost = {
+  id: string;
+  coverUrl: string | null;
+  mediaCount: number;
+};
+
 export default function SggDetailScreen() {
   const { osmId, name } = useLocalSearchParams<{ osmId: string; name?: string }>();
   const router = useRouter();
+  const { session } = useAuth();
   const [sgg, setSgg] = useState<SggRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -37,8 +59,23 @@ export default function SggDetailScreen() {
   // 딥링크 등. 에러(재시도)와 구분해서 안내한다.
   const [notFound, setNotFound] = useState(false);
 
+  const [activeTab, setActiveTab] = useState<'mine' | 'all'>('mine');
+  const [posts, setPosts] = useState<GridPost[]>([]);
+  const [loadingPosts, setLoadingPosts] = useState(true);
+  const [postsError, setPostsError] = useState(false);
+  // 최초 1회만 로딩 스피너를 보여주고, 이후 포커스 재조회는 기존 그리드를 유지한
+  // 채 백그라운드로 갱신한다(깜빡임 방지) — 탭 전환도 동일하게 취급.
+  const loadedPostsOnceRef = useRef(false);
+  // 탭 전환/재포커스가 겹칠 때 늦게 도착한 이전 응답이 최신 응답을 덮어쓰지
+  // 않도록 하는 토큰(나라상세·프로필 D-2와 동일 패턴).
+  const requestIdRef = useRef(0);
+  // 그리드 컨테이너의 실제 렌더 폭 — Dimensions.get('window')는 엣지투엣지 처리
+  // 방식에 따라 실제 렌더 폭과 어긋날 수 있어 onLayout으로 직접 측정한다.
+  const [gridWidth, setGridWidth] = useState(SCREEN_WIDTH);
+  const cellSize = (gridWidth - GRID_GAP * (NUM_COLS - 1)) / NUM_COLS;
+
   // 경계는 정적 참조 데이터라 포커스마다 다시 볼 필요가 없다(useFocusEffect 아님).
-  // 게시물·색칠처럼 바뀌는 것들은 다음 단계에서 useFocusEffect 로 붙인다.
+  // 게시물처럼 바뀌는 것만 아래에서 useFocusEffect 로 붙인다.
   const loadSgg = useCallback(() => {
     const relationId = Number(osmId);
     if (!Number.isFinite(relationId)) {
@@ -72,6 +109,68 @@ export default function SggDetailScreen() {
   }, [osmId]);
 
   useEffect(loadSgg, [loadSgg]);
+
+  // 이 시군구(sgg.id)의 게시물 그리드 — 나라상세의 country_code 필터를 sgg_id 로
+  // 바꾼 것 외에는 같다. "내 기록"이면 user_id 도 필터, "모두"면 무필터(RLS의
+  // posts_select_visible = can_view_post 가 가시성을 판정한다).
+  //
+  // useFocusEffect 는 콜백 identity 가 바뀌면 focus 상태에서도 즉시 재실행되므로
+  // (@react-navigation/core), activeTab 을 의존성에 넣는 것만으로 탭 전환 재조회가
+  // 된다. sggId 도 의존성이라 경계 조회가 끝나는 순간 자동으로 첫 로드가 돈다.
+  const sggId = sgg?.id;
+  const loadPosts = useCallback(() => {
+    const userId = session?.user.id;
+    if (!sggId) return;
+    if (activeTab === 'mine' && !userId) return;
+    if (!loadedPostsOnceRef.current) setLoadingPosts(true);
+    setPostsError(false);
+
+    requestIdRef.current += 1;
+    const requestId = requestIdRef.current;
+
+    (async () => {
+      let query = supabase
+        .from('posts')
+        .select('id, post_media(url, order_index)')
+        .eq('sgg_id', sggId)
+        .order('created_at', { ascending: false });
+      if (activeTab === 'mine') query = query.eq('user_id', userId);
+
+      const { data, error: err } = await query;
+
+      if (requestId !== requestIdRef.current) return;
+      if (err) {
+        console.error('posts 조회 실패:', err);
+        setLoadingPosts(false);
+        setPostsError(true);
+        return;
+      }
+
+      const rows = (data ?? []).map((post) => {
+        const media = [...(post.post_media ?? [])].sort((a, b) => a.order_index - b.order_index);
+        return { id: post.id, coverUrl: media[0]?.url ?? null, mediaCount: media.length };
+      });
+
+      // 대표사진 url 은 시드의 외부 URL 이거나 private 버킷 저장 경로일 수 있어
+      // signed URL 배치 발급(1시간)을 거친 뒤 화면에 반영한다.
+      const rawUrls = rows
+        .map((row) => row.coverUrl)
+        .filter((url): url is string => url !== null);
+      const resolved = await resolveMediaUrls(rawUrls);
+
+      if (requestId !== requestIdRef.current) return;
+      setPosts(
+        rows.map((row) => ({
+          ...row,
+          coverUrl: row.coverUrl ? resolved[row.coverUrl] ?? null : null,
+        })),
+      );
+      setLoadingPosts(false);
+      loadedPostsOnceRef.current = true;
+    })();
+  }, [sggId, activeTab, session?.user.id]);
+
+  useFocusEffect(loadPosts);
 
   // 헤더는 지도에서 넘겨받은 이름으로 즉시 그리고, 조회가 끝나면 DB 값으로 교체한다
   // (나라상세가 nm 파라미터를 쓰는 것과 같은 패턴).
@@ -110,7 +209,26 @@ export default function SggDetailScreen() {
         {showSido && <Text style={styles.breadcrumbSep}> · {sido}</Text>}
       </View>
 
-      {/* 본문 — 게시물 그리드는 S-6b, 색 선택은 S-6c 에서 붙인다. */}
+      {/* 내 기록 / 모두 탭 — 경계(uuid)를 모르면 조회 자체가 불가능하므로 그때는
+          띄우지 않는다(눌러도 아무 일도 안 하는 탭을 만들지 않기 위함). */}
+      {sgg && (
+        <View style={styles.tabRow}>
+          <Pressable
+            style={[styles.tab, activeTab === 'mine' && styles.tabSelected]}
+            onPress={() => setActiveTab('mine')}
+          >
+            <Text style={[styles.tabText, activeTab === 'mine' && styles.tabTextSelected]}>내 기록</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.tab, activeTab === 'all' && styles.tabSelected]}
+            onPress={() => setActiveTab('all')}
+          >
+            <Text style={[styles.tabText, activeTab === 'all' && styles.tabTextSelected]}>모두</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {/* 본문 — 색 선택은 S-6c 에서 붙인다. */}
       <View style={styles.body}>
         {loading ? (
           <View style={styles.centerBody}>
@@ -124,7 +242,49 @@ export default function SggDetailScreen() {
           <View style={styles.centerBody}>
             <Text style={styles.placeholderText}>존재하지 않는 지역이에요</Text>
           </View>
-        ) : null}
+        ) : loadingPosts ? (
+          <View style={styles.centerBody}>
+            <ActivityIndicator color={theme.colors.accent} />
+          </View>
+        ) : postsError ? (
+          <View style={styles.centerBody}>
+            <ErrorView onRetry={loadPosts} />
+          </View>
+        ) : posts.length === 0 ? (
+          <View style={styles.centerBody}>
+            <Text style={styles.placeholderText}>
+              {activeTab === 'mine' ? '아직 이 지역에 남긴 기록이 없어요' : '아직 게시물이 없어요'}
+            </Text>
+          </View>
+        ) : (
+          <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+            <Text style={styles.countLabel}>
+              기록 <Text style={styles.countNumber}>{posts.length}</Text>
+            </Text>
+            <View
+              style={styles.grid}
+              onLayout={(e) => setGridWidth(e.nativeEvent.layout.width)}
+            >
+              {posts.map((post) => (
+                <Pressable
+                  key={post.id}
+                  style={[styles.cell, { width: cellSize, height: cellSize }]}
+                  onPress={() => router.push({ pathname: '/post/[id]', params: { id: post.id } } as any)}
+                >
+                  {post.coverUrl && (
+                    <Image source={{ uri: post.coverUrl }} style={styles.cellImage} resizeMode="cover" />
+                  )}
+                  {post.mediaCount > 1 && (
+                    <View style={styles.multiBadge}>
+                      <View style={styles.multiBadgeSquareBack} />
+                      <View style={styles.multiBadgeSquareFront} />
+                    </View>
+                  )}
+                </Pressable>
+              ))}
+            </View>
+          </ScrollView>
+        )}
       </View>
     </SafeAreaView>
   );
@@ -187,6 +347,35 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
   },
 
+  // 내 기록 / 모두 탭 (나라상세와 동일 스펙)
+  tabRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  tab: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+  },
+  tabSelected: {
+    backgroundColor: theme.colors.accent,
+    borderColor: theme.colors.accent,
+  },
+  tabText: {
+    fontSize: 13,
+    fontFamily: theme.fonts.semibold,
+    color: theme.colors.textSecondary,
+  },
+  tabTextSelected: {
+    color: '#fff',
+  },
+
   body: {
     flex: 1,
   },
@@ -200,5 +389,60 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: theme.colors.textSecondary,
     textAlign: 'center',
+  },
+  scrollContent: {
+    paddingBottom: 32,
+  },
+  countLabel: {
+    fontSize: 14,
+    fontFamily: theme.fonts.bold,
+    color: theme.colors.text,
+    paddingHorizontal: 16,
+    marginBottom: 10,
+  },
+  countNumber: {
+    color: theme.colors.accent,
+  },
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: GRID_GAP,
+  },
+  cell: {
+    backgroundColor: '#f3f4f6',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  cellImage: {
+    width: '100%',
+    height: '100%',
+  },
+  multiBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 14,
+    height: 14,
+  },
+  multiBadgeSquareBack: {
+    position: 'absolute',
+    top: 0,
+    left: 4,
+    width: 10,
+    height: 10,
+    borderRadius: 2,
+    borderWidth: 1.2,
+    borderColor: 'rgba(255,255,255,0.9)',
+  },
+  multiBadgeSquareFront: {
+    position: 'absolute',
+    top: 4,
+    left: 0,
+    width: 10,
+    height: 10,
+    borderRadius: 2,
+    borderWidth: 1.2,
+    borderColor: 'rgba(255,255,255,0.9)',
+    backgroundColor: 'rgba(0,0,0,0.15)',
   },
 });
