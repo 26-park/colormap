@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Dimensions,
   Image,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,6 +14,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Text } from '@/components/AppText';
 import { theme } from '@/constants/theme';
+import { COLOR_PALETTE } from '@/constants/palette';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/auth';
 import { resolveMediaUrls } from '@/lib/media';
@@ -58,6 +60,22 @@ export default function SggDetailScreen() {
   // 조회는 됐는데 행이 없는 경우 — 경계 갱신으로 relation 이 사라진 뒤 남은
   // 딥링크 등. 에러(재시도)와 구분해서 안내한다.
   const [notFound, setNotFound] = useState(false);
+
+  // S-6c 색칠 — 나라상세 G-2 패턴을 그대로 옮긴 것.
+  // ⭐ 앱은 색칠을 생성하지 않는다(S-4 트리거가 한다). 이미 있는 행의 color 만 바꾼다.
+  const [color, setColor] = useState<string | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  // 팔레트 잠금 판정 전용 — 탭 상태와 무관하게 항상 "내 게시물 수"만 센다
+  // ("모두" 탭을 보고 있어도 잠금은 정확해야 한다).
+  const [myPostCount, setMyPostCount] = useState<number | null>(null);
+  // 조회 실패 시 myPostCount 는 이전 값(초기 null)을 유지해 fail-closed 로 잠긴 채
+  // 남는다 — 이 플래그는 "정말 기록이 없어서 잠김"과 "확인 실패로 잠김"을 구분해
+  // 힌트 문구와 재시도를 다르게 보여주기 위한 것.
+  const [myPostCountError, setMyPostCountError] = useState(false);
+  const [lockHintVisible, setLockHintVisible] = useState(false);
+  const [lockHintText, setLockHintText] = useState('');
+  const lockHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const canColor = myPostCount !== null && myPostCount > 0;
 
   const [activeTab, setActiveTab] = useState<'mine' | 'all'>('mine');
   const [posts, setPosts] = useState<GridPost[]>([]);
@@ -172,6 +190,106 @@ export default function SggDetailScreen() {
 
   useFocusEffect(loadPosts);
 
+  // 현재 색 — 포커스마다 재조회한다. S-4 트리거가 게시물 유무에 따라 행을 만들거나
+  // 지우므로, 게시물 상세에서 삭제하고 돌아오면 색 동그라미 상태도 같이 바뀐다.
+  useFocusEffect(
+    useCallback(() => {
+      const userId = session?.user.id;
+      if (!userId || !sggId) return;
+
+      supabase
+        .from('sgg_visits')
+        .select('color')
+        .eq('user_id', userId)
+        .eq('sgg_id', sggId)
+        .maybeSingle()
+        .then(({ data, error: err }) => {
+          if (err) {
+            console.error('sgg_visits 조회 실패:', err);
+            return;
+          }
+          setColor(data?.color ?? null);
+        });
+    }, [session?.user.id, sggId]),
+  );
+
+  // 잠금 판정 — head: true 라 행 페이로드 없이 개수만 센다.
+  // posts_sgg_idx(sgg_id, user_id) 가 이 조건에 그대로 맞는다.
+  const loadMyPostCount = useCallback(() => {
+    const userId = session?.user.id;
+    if (!userId || !sggId) return;
+
+    setMyPostCountError(false);
+    supabase
+      .from('posts')
+      .select('id', { count: 'exact', head: true })
+      .eq('sgg_id', sggId)
+      .eq('user_id', userId)
+      .then(({ count, error: err }) => {
+        if (err) {
+          console.error('내 게시물 수 조회 실패:', err);
+          setMyPostCountError(true);
+          return;
+        }
+        setMyPostCount(count ?? 0);
+      });
+  }, [session?.user.id, sggId]);
+
+  useFocusEffect(loadMyPostCount);
+
+  useEffect(() => {
+    return () => {
+      if (lockHintTimerRef.current) clearTimeout(lockHintTimerRef.current);
+    };
+  }, []);
+
+  function showLockHint(text: string) {
+    setLockHintText(text);
+    setLockHintVisible(true);
+    if (lockHintTimerRef.current) clearTimeout(lockHintTimerRef.current);
+    lockHintTimerRef.current = setTimeout(() => setLockHintVisible(false), 2000);
+  }
+
+  function handleColorDotPress() {
+    if (myPostCountError) {
+      showLockHint('잠금 상태를 확인하지 못했어요 · 탭해서 다시 시도');
+      loadMyPostCount();
+      return;
+    }
+    if (!canColor) {
+      showLockHint('이 지역에 기록을 추가하면 색칠돼요');
+      return;
+    }
+    setPaletteOpen(true);
+  }
+
+  // S-4 트리거가 sgg_visits 행 생성/삭제를 전담 — 앱은 기존 행의 color 만
+  // UPDATE 한다(INSERT/upsert 경로 없음). canColor 가 true 면 트리거가 행을
+  // 보장하지만, RLS USING 위반은 에러가 아니라 조용한 0행으로 끝나므로
+  // .select() 로 영향 행 수를 반드시 확인한다 — 0행을 성공으로 취급하지 않는다.
+  async function handleSelectColor(picked: string) {
+    const userId = session?.user.id;
+    if (!userId || !sggId) return;
+
+    const { data, error: err } = await supabase
+      .from('sgg_visits')
+      .update({ color: picked })
+      .eq('user_id', userId)
+      .eq('sgg_id', sggId)
+      .select('color');
+
+    if (err) {
+      console.error('sgg_visits 저장 실패:', err);
+      return;
+    }
+    if (!data || data.length === 0) {
+      console.warn('sgg_visits 행이 없어 색을 변경하지 못했습니다:', sggId);
+      return;
+    }
+    setColor(picked);
+    setPaletteOpen(false);
+  }
+
   // 헤더는 지도에서 넘겨받은 이름으로 즉시 그리고, 조회가 끝나면 DB 값으로 교체한다
   // (나라상세가 nm 파라미터를 쓰는 것과 같은 패턴).
   const title = sgg?.name ?? name ?? '';
@@ -190,10 +308,28 @@ export default function SggDetailScreen() {
 
         <View style={styles.titleRow}>
           <Text style={styles.title} numberOfLines={1}>{title}</Text>
+          {/* 경계를 아직 모르면(uuid 없음) 색 조회·변경 자체가 불가능하므로 숨긴다 */}
+          {sgg && (
+            <Pressable
+              style={[
+                styles.colorDot,
+                canColor
+                  ? (color ? { backgroundColor: color } : styles.colorDotEmpty)
+                  : styles.colorDotLocked,
+              ]}
+              onPress={handleColorDotPress}
+            />
+          )}
         </View>
 
         {/* 헤더 좌우 균형용 — 나라상세의 ···(no-op)는 여기 두지 않는다 */}
         <View style={styles.iconBtn} />
+
+        {lockHintVisible && (
+          <View style={styles.lockHintWrap} pointerEvents="none">
+            <Text style={styles.lockHintText}>{lockHintText}</Text>
+          </View>
+        )}
       </View>
 
       {/* 브레드크럼 — 줌 6 이상에서는 지도에서 나라(KR)를 탭할 방법이 사실상
@@ -286,6 +422,34 @@ export default function SggDetailScreen() {
           </ScrollView>
         )}
       </View>
+
+      {/* 색 팔레트 바텀시트 — v1: 고정 8색만 (컬러휠/hex는 v1.2 유료).
+          ⚠️ 나라상세(app/country/[cc].tsx)와 같은 시트가 두 곳에 있다 —
+          ColorPaletteSheet 추출은 백로그(CLAUDE.md 알려진 갭). */}
+      <Modal
+        visible={paletteOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setPaletteOpen(false)}
+      >
+        <View style={styles.modalRoot}>
+          <Pressable style={styles.backdrop} onPress={() => setPaletteOpen(false)} />
+          <View style={styles.sheet}>
+            <Text style={styles.sheetTitle}>지역 색 선택</Text>
+            <View style={styles.swatchRow}>
+              {COLOR_PALETTE.map((swatch) => (
+                <Pressable
+                  key={swatch}
+                  style={[styles.swatchWrapper, swatch === color && styles.swatchWrapperSelected]}
+                  onPress={() => handleSelectColor(swatch)}
+                >
+                  <View style={[styles.swatch, { backgroundColor: swatch }]} />
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -302,6 +466,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 8,
+    position: 'relative', // lockHintWrap(absolute) 기준
   },
   iconBtn: {
     width: 36,
@@ -329,6 +494,43 @@ const styles = StyleSheet.create({
     fontFamily: theme.fonts.bold,
     color: theme.colors.text,
     textAlign: 'center',
+  },
+
+  colorDot: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+  },
+  colorDotEmpty: {
+    backgroundColor: theme.colors.background,
+    borderWidth: 1.5,
+    borderColor: theme.colors.border,
+  },
+  colorDotLocked: {
+    backgroundColor: theme.colors.background,
+    borderWidth: 1.5,
+    borderColor: theme.colors.border,
+    opacity: 0.5,
+  },
+  lockHintWrap: {
+    position: 'absolute',
+    top: '100%',
+    left: 16,
+    right: 16,
+    marginTop: 4,
+    alignItems: 'center',
+  },
+  lockHintText: {
+    fontSize: 12,
+    fontFamily: theme.fonts.semibold,
+    color: '#fff',
+    // 나라상세보다 진하게 — 여기는 힌트가 브레드크럼 줄 위에 겹치므로
+    // 반투명이면 아래 글자가 비쳐 보인다.
+    backgroundColor: 'rgba(0,0,0,0.92)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    overflow: 'hidden',
   },
 
   breadcrumbRow: {
@@ -444,5 +646,53 @@ const styles = StyleSheet.create({
     borderWidth: 1.2,
     borderColor: 'rgba(255,255,255,0.9)',
     backgroundColor: 'rgba(0,0,0,0.15)',
+  },
+
+  // 색 팔레트 바텀시트
+  modalRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  sheet: {
+    backgroundColor: theme.colors.background,
+    borderTopLeftRadius: theme.radius.card,
+    borderTopRightRadius: theme.radius.card,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 36,
+  },
+  sheetTitle: {
+    fontSize: 15,
+    fontFamily: theme.fonts.bold,
+    color: theme.colors.text,
+    textAlign: 'center',
+    marginBottom: 18,
+  },
+  swatchRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 16,
+  },
+  swatchWrapper: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  swatchWrapperSelected: {
+    borderColor: theme.colors.text,
+  },
+  swatch: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
   },
 });
