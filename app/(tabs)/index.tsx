@@ -171,6 +171,23 @@ export default function MapScreen() {
     router.push({ pathname: '/country/[cc]', params: { cc, nm } } as any);
   }
 
+  // S-6a: 시군구 탭 → 시군구 상세.
+  // ⭐ 줌 분기를 따로 계산하지 않는다 — 네이티브가 소스별로
+  //    queryRenderedFeatures(터치점, 그 소스의 레이어들)를 돌리므로(MLRNMapView.kt),
+  //    minzoom/maxzoom 으로 꺼진 레이어는 애초에 후보가 아니다. 즉 SGG_MIN_ZOOM
+  //    미만에서는 이 핸들러가 아예 불리지 않고 countries 가 처리한다.
+  //    두 소스가 동시에 히트하면(해안선 근처 — country-border 는 줌 제한이 없다)
+  //    스타일에서 더 위에 있는 레이어를 가진 소스가 이긴다 = sgg. 바다 쪽을 찍어
+  //    sgg 가 안 잡히면 countries 만 남아 /country/KR 로 가는 폴백이 된다.
+  function handleSggPress(event: NativeSyntheticEvent<PressEventWithFeatures>) {
+    const feature = event.nativeEvent.features[0];
+    const osmId = feature?.properties?.osm_id;
+    const name = feature?.properties?.name;
+    if (osmId == null) return;
+
+    router.push({ pathname: '/sgg/[osmId]', params: { osmId: String(osmId), name } } as any);
+  }
+
   return (
     <View style={styles.container}>
       {/* 지도 — 컨테이너 전체를 채움 */}
@@ -220,7 +237,7 @@ export default function MapScreen() {
         </GeoJSONSource>
 
         {/* 시군구 — countries 소스 뒤에 오므로 위에 그려진다. */}
-        <GeoJSONSource id="sgg" data={sggGeoJSON as any}>
+        <GeoJSONSource id="sgg" data={sggGeoJSON as any} onPress={handleSggPress}>
           <Layer
             id="sgg-fill"
             type="fill"
