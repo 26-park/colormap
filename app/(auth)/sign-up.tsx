@@ -89,7 +89,7 @@ export default function SignUpScreen() {
         >
           {/* 헤더 */}
           <View style={styles.header}>
-            <Text style={styles.logoText}>colormap</Text>
+            <Text style={styles.logoText}>Tintrail</Text>
             <Text style={styles.title}>회원가입</Text>
           </View>
 

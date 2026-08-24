@@ -113,7 +113,7 @@ export default function UsernameScreen() {
         >
           {/* 헤더 */}
           <View style={styles.header}>
-            <Text style={styles.logoText}>colormap</Text>
+            <Text style={styles.logoText}>Tintrail</Text>
             <Text style={styles.title}>username을 정해주세요</Text>
             <Text style={styles.subtitle}>
               다른 사람들이 나를 찾을 때 쓰는 이름이에요.{'\n'}

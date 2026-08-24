@@ -57,7 +57,7 @@ export default function LoginScreen() {
         >
           {/* 로고 */}
           <View style={styles.logoArea}>
-            <Text style={styles.logoText}>colormap</Text>
+            <Text style={styles.logoText}>Tintrail</Text>
             <Text style={styles.tagline}>내 여행을 세계지도 위에</Text>
           </View>
 
