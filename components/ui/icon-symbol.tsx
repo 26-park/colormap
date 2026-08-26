@@ -18,6 +18,10 @@ const MAPPING = {
   'paperplane.fill': 'send',
   'chevron.left.forwardslash.chevron.right': 'code',
   'chevron.right': 'chevron-right',
+  // 하단 탭 2개. 이 매핑이 없으면 MaterialIcons가 name={undefined}로 렌더돼
+  // 아이콘이 조용히 사라진다(실기기·에뮬 모두 라벨만 보이던 원인).
+  'map.fill': 'map',
+  'person.fill': 'person',
 } as IconMapping;
 
 /**

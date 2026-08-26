@@ -4,6 +4,7 @@ import {
   Alert,
   Dimensions,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -15,7 +16,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Map, Camera, Marker, GeoJSONSource, Layer } from '@maplibre/maplibre-react-native';
 import { Text } from '@/components/AppText';
@@ -88,6 +89,11 @@ export default function PostDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { session } = useAuth();
+  const insets = useSafeAreaInsets();
+  // 댓글 입력 바는 화면 맨 아래에 고정돼 있어 제스처 바(하단 인셋)에 먹힌다.
+  // 키보드가 올라오면 입력 바가 키보드 위로 붙으므로 그때는 인셋을 빼야 한다
+  // — 안 그러면 키보드와 입력 바 사이에 빈 띠가 생긴다.
+  const [keyboardShown, setKeyboardShown] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -194,6 +200,18 @@ export default function PostDetailScreen() {
     return () => {
       unmountedRef.current = true;
       void flushRef.current();
+    };
+  }, []);
+
+  // 키보드 표시 여부 — 댓글 입력 바의 하단 인셋을 켜고 끄는 데만 쓴다.
+  // 안드로이드는 Did* 이벤트만 신뢰할 수 있어(Will*은 발생하지 않는다) 양쪽
+  // 플랫폼 모두 Did*를 쓴다.
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardShown(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardShown(false));
+    return () => {
+      show.remove();
+      hide.remove();
     };
   }, []);
 
@@ -489,12 +507,14 @@ export default function PostDetailScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      {/* 입력창이 키보드에 가리지 않게. iOS는 padding, 안드로이드는 기본
-          adjustResize가 처리하므로 behavior를 주지 않는다(다른 화면과 동일 패턴). */}
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      {/* 입력창이 키보드에 가리지 않게.
+          ⚠️ 예전엔 "안드로이드는 adjustResize가 알아서 처리한다"고 보고 behavior를
+          주지 않았는데, 안드로이드 15의 강제 엣지투엣지에서는 창이 리사이즈되지
+          않아 입력 바가 키보드에 통째로 가려진다(에뮬 API 35에서 재현).
+          두 플랫폼 모두 'padding'을 쓴다 — KeyboardAvoidingView가 자기 프레임과
+          키보드 위치를 measure해서 겹치는 만큼만 패딩을 주므로, 창이 실제로
+          리사이즈되는 기기에서는 겹침이 0이 되어 중복 보정이 생기지 않는다. */}
+      <KeyboardAvoidingView style={styles.flex} behavior="padding">
       {/* 헤더 */}
       <View style={styles.header}>
         <Pressable style={styles.iconBtn} onPress={() => router.back()}>
@@ -669,7 +689,12 @@ export default function PostDetailScreen() {
 
       {/* 댓글 입력 — 스크롤 영역 밖에 고정. 게시물을 볼 수 있을 때만 노출한다. */}
       {!loading && !fetchError && !notFound && post && (
-        <View style={styles.composerBar}>
+        <View
+          style={[
+            styles.composerBar,
+            { paddingBottom: keyboardShown ? 10 : insets.bottom + 10 },
+          ]}
+        >
           <TextInput
             style={styles.composerInput}
             value={draft}
@@ -834,7 +859,8 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     gap: 8,
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    // paddingBottom은 인라인에서 하단 인셋과 함께 계산한다(제스처 바 회피).
+    paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
     backgroundColor: theme.colors.background,
