@@ -476,6 +476,22 @@ profiles, friendships, cities, country_visits, posts, post_media, post_likes, co
 - **⭐ 출처표시는 소스와 무관하게 항상 넣는다 (확정)**: 라이선스가 출처표시를 요구하지 않더라도 넣는다. 소스를 바꿔도 UI를 다시 만들 필요가 없고, 표기 누락 리스크가 원천적으로 사라진다. **설정 화면에 "지도 데이터 출처" 항목**을 둔다(Phase S-5 또는 S-6 범위).
 - 참고: 현재 쓰는 `assets/geo/countries.json`은 **Natural Earth(퍼블릭 도메인)** — 이 원칙과 무관하게 제약 없음.
 
+## 안드로이드 화면 함정 (2026-08-26, Phase T 실기기 1순위에서 전부 실측 확인)
+
+실기기(갤럭시) 보고를 에뮬레이터 API 35에서 재현하며 확인한 것들. **네 개 다 "조용히 잘못되는" 종류**라 눈으로 보기 전엔 안 드러난다.
+
+- ⭐ **안드로이드 15는 엣지투엣지가 강제라 `adjustResize` 전제가 무효다.** 창이 리사이즈되지 않아 **입력창이 키보드에 통째로 가려진다.** `KeyboardAvoidingView`의 `behavior`는 **양 플랫폼 공통 `'padding'`** 으로 준다(과거의 `Platform.OS === 'ios' ? 'padding' : undefined` 패턴은 이제 틀렸다).
+  - 이중 보정 걱정은 안 해도 된다 — KAV가 **자기 프레임과 키보드 위치를 measure해서 겹치는 만큼만** 패딩을 주므로, 창이 실제로 리사이즈되는 기기에서는 겹침이 0이 되어 아무것도 더해지지 않는다.
+  - 적용 완료: `app/post/[id].tsx`(댓글 입력 바), `app/(auth)/login.tsx`, `app/(auth)/sign-up.tsx`, `app/(onboarding)/username.tsx`. **새로 만드는 입력 화면도 이 형태로 시작할 것.**
+  - 화면 하단에 **고정된** 입력 바가 있으면 `insets.bottom`을 따로 더하되 **키보드가 올라오면 빼야 한다**(안 그러면 키보드와 입력 바 사이에 빈 띠가 생긴다). `Keyboard.addListener('keyboardDidShow'/'keyboardDidHide')`로 처리 — 안드로이드는 `Will*` 이벤트가 발생하지 않으므로 `Did*`만 쓴다.
+- ⭐ **글자 잘림의 원인을 폭 부족으로 단정하지 말 것 — 시스템 글꼴 배율이 진짜 원인인 경우가 있다.** 탭 라벨이 "지도"→"지…"로 잘린다는 보고를 **에뮬 기본(1.0)에서는 재현 못 했고, `adb shell settings put system font_scale 1.5`로 즉시 재현**했다. 사용자 폰의 글꼴 크기가 기본보다 크게 잡혀 있었던 것.
+  - **재현 명령**: `adb shell settings put system font_scale 1.5` (되돌리기: `1.0`). 레이아웃 관련 보고를 받으면 **이 배율부터 올려볼 것.**
+  - 높이가 고정된 UI(탭바, 헤더, 칩)의 텍스트에는 `maxFontSizeMultiplier` 상한을 준다. 탭 라벨은 1.2로 고정했다.
+  - **이 항목은 "글꼴 최대일 때 앱 전체가 깨진다"는 별도 보고와 같은 뿌리다** — 전역 정책(`AppText`의 기본 상한 등)은 Phase T 5순위에서 다룬다.
+- ⭐ **`components/ui/icon-symbol.tsx`의 `MAPPING`에 없는 이름은 조용히 아무것도 그리지 않는다.** `MaterialIcons`에 `name={undefined}`가 넘어가도 에러가 없다. 실제로 하단 탭 아이콘 2개가 **처음부터 안 보이는 상태였는데 아무도 눈치채지 못했다**(`map.fill`/`person.fill` 미등록). **아이콘을 쓸 때는 매핑에 있는지 먼저 확인할 것.**
+- ⭐ **`tabBarStyle`에 `height`를 직접 주지 말 것.** `@react-navigation/bottom-tabs`의 `getTabBarHeight`가 스타일에 `height`가 있으면 **그 값을 그대로 쓰고 하단 인셋을 더하지 않는다** → 제스처 바에 탭바가 먹힌다. 배경·테두리만 지정하고 높이·패딩 계산은 라이브러리에 맡긴다.
+- 참고: **인셋 자체는 처음부터 정상이었다** — `useSafeAreaInsets()`가 `{top: 51.8, bottom: 24}`를 정상 반환하고(expo-router가 `SafeAreaProvider`를 이미 감싼다), 스크롤 화면들의 `paddingBottom`(설정 40 / 친구 80 / 프로필 32 / 나라 96 / 시군구 32 / 게시물 40)도 24dp보다 크다. **"하단이 먹힌다" = "인셋이 안 온다"로 넘겨짚지 말고 값을 먼저 찍어볼 것.**
+
 ## 트러블슈팅 (환경 이슈 — 재발 시 시간 아끼려고 기록)
 
 - **에뮬레이터 네트워크 먹통 (앱이 `Network request failed` 반복, 2026-07-31)**: 스냅샷에서 복원된 에뮬레이터가 WiFi는 붙었는데(`wlan0` UP + IP 할당) 실제 외부 통신이 전부 실패하는 상태가 됐다. **우회책: 콜드 부팅** — `emulator.exe -avd <AVD> -no-snapshot-load -no-snapshot-save -dns-server 8.8.8.8`. 재부팅 후 정상화 확인됨.
