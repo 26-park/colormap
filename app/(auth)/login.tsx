@@ -1,7 +1,6 @@
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -47,10 +46,10 @@ export default function LoginScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      {/* 안드로이드 15의 강제 엣지투엣지에서는 창이 리사이즈되지 않아
+          behavior 없이는 입력란이 키보드에 가려진다 — 양 플랫폼 공통 'padding'
+          (게시물 상세 댓글 입력 바와 같은 판단, CLAUDE.md 참고). */}
+      <KeyboardAvoidingView style={styles.flex} behavior="padding">
         <ScrollView
           contentContainerStyle={styles.container}
           keyboardShouldPersistTaps="handled"
