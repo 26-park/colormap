@@ -20,6 +20,10 @@ import countriesGeoJSON from '@/assets/geo/countries.json';
 // 렌더링용 시군구 경계 — 해안선 클립 + 3% 단순화본(718KB). 판정용 미클립 원본과
 // 별개 파일이다. 출처/라이선스는 data/kr-sgg/README.md 참고 (OSM, ODbL 1.0).
 import sggGeoJSON from '@/data/kr-sgg/sgg_kr_render.json';
+// 시군구 라벨 앵커 — 피처당 점 1개(data/kr-sgg/make_labels.py로 생성).
+// 경계 폴리곤에 직접 symbol을 물리면 MultiPolygon 파트마다 라벨이 붙어
+// 섬이 많은 시군구에서 이름이 여러 번 나온다(여수시 6개, 통영시 7개 실측).
+import sggLabelGeoJSON from '@/data/kr-sgg/sgg_kr_labels.json';
 
 // Phase 1: 인라인 스타일 JSON — 외부 타일 없음. Phase 2에서 Tintrail 커스텀 스타일로 교체
 const MAP_STYLE = {
@@ -54,6 +58,14 @@ const ZOOM_ANIM_MS = 300;
 // center는 제주(33.1°)부터 최북단(38.6°)까지 들어오도록 남한 가운데로 잡았다.
 const KOREA_VIEW = { center: [127.8, 36.0] as [number, number], zoom: 6.2 };
 const KOREA_FLY_MS = 900;
+
+// 시군구 라벨. 경계(SGG_MIN_ZOOM)보다 늦게 등장시켜, 멀리서는 색만 보이고
+// 가까이 가면 이름이 붙게 한다. 크기는 줌으로 보간한다.
+const SGG_LABEL_MIN_ZOOM = 6;
+const SGG_LABEL_SIZE = ['interpolate', ['linear'], ['zoom'], 6, 9, 11, 15];
+// glyphs 없는 스타일이라 로컬 폰트 이름으로 해석된다. 안드로이드에서 한글이
+// 확실히 있는 시스템 폰트를 앞에 두고, 없으면 뒤로 폴백한다.
+const SGG_LABEL_FONT = ['Noto Sans CJK KR', 'Roboto', 'sans-serif'];
 
 // 시군구 색 매핑. 나라와 같은 match 구조지만 키가 osm_id(숫자)다.
 // ⭐ sgg_code 를 키로 쓰면 안 된다 — 2026-07 신설된 인천 4개 구는 코드가 아직
@@ -270,6 +282,33 @@ export default function MapScreen() {
             type="line"
             minzoom={SGG_MIN_ZOOM}
             paint={{ 'line-color': '#FFFFFF', 'line-width': 0.6 }}
+          />
+        </GeoJSONSource>
+
+        {/* 시군구 이름 라벨 — 경계와 별도 소스(피처당 점 1개).
+            ⭐ 스타일에 glyphs 가 없으면 text-font 는 "로컬 시스템 폰트 이름
+               목록"으로 해석된다(MapLibre 사양) — 그래서 글리프 서버 없이
+               한글이 렌더된다. 타일 벤더가 없는 이 프로젝트에 딱 맞는다.
+            ⭐ 겹침 처리는 MapLibre 기본 동작에 맡긴다(text-allow-overlap 기본
+               false) — 자리가 없으면 알아서 숨고 확대하면 다시 나타난다.
+               별도 로직 불필요.
+            onPress 를 주지 않아 탭은 이 소스를 통과해 아래 폴리곤이 받는다. */}
+        <GeoJSONSource id="sgg-labels" data={sggLabelGeoJSON as any}>
+          <Layer
+            id="sgg-label"
+            type="symbol"
+            minzoom={SGG_LABEL_MIN_ZOOM}
+            layout={{
+              'text-field': ['get', 'name'] as any,
+              'text-font': SGG_LABEL_FONT,
+              'text-size': SGG_LABEL_SIZE as any,
+              'text-padding': 2,
+            }}
+            paint={{
+              'text-color': '#4A5058',
+              'text-halo-color': 'rgba(255,255,255,0.9)',
+              'text-halo-width': 1.2,
+            }}
           />
         </GeoJSONSource>
       </Map>
