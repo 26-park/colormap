@@ -327,6 +327,7 @@
     - **리셋 로직은 손대지 않았다** — 기존 "필터/정렬 변경 시 리셋" useEffect에 `reloadToken` 의존성만 추가해 검증된 경로를 그대로 재사용한다.
     - 비교 기준은 **현재 필터가 적용된 개수**이고, 어느 필터에서 잰 값인지(`{cc, count}`)를 같이 들고 있어야 **필터 전환 직후를 변화로 오인하지 않는다.** 조회 실패 시에는 판단 자체를 건너뛴다 — 실패를 "변화"로 읽으면 오프라인에서 목록이 날아간다.
     - ⚠️ **알려진 한계 (의도적으로 안 고침)**: 프로필 그리드 갱신은 `filteredCount` 변화를 신호로 쓴다. **같은 필터에서 삭제 1건 + 작성 1건이 동시에 일어나 개수가 그대로면 갱신되지 않는다.** 다음 포커스에 개수가 한 번이라도 바뀌면 해소된다. 원천 차단하려면 최신 글 id 비교가 필요한데 쿼리가 늘어 **비용 대비 가치가 낮다고 판단**했다.
+  - **지도 초기 뷰 중심이 고정값이다 (2026-08-27, Phase T 3순위)**: `initialViewState`의 중심을 경도 100(아시아)으로 못박아 뒀다. 줌 0에서도 경도가 다 안 들어와서 중심 선택이 곧 "첫 화면에 뭐가 보이나"가 되는데, **해외 사용자에겐 아시아 중심이 안 맞는다.** 사용자의 `country_visits` 무게중심으로 잡는 방안을 검토할 것 — 지금은 한국 사용자 위주라 고정으로 충분하다.
   - **색 팔레트 바텀시트가 두 곳에 중복 (Phase S-6에서 발생)**: `COLOR_PALETTE` 8색 시트 UI가 나라상세(`app/country/[cc].tsx`)와 시군구상세(`app/sgg/[osmId].tsx`) 양쪽에 같은 모양으로 있다. **S-6에서는 의도적으로 복사했다** — 나라상세를 건드리면 회귀 리스크가 생기고 S-6 범위를 넓히게 되기 때문. **`components/ColorPaletteSheet.tsx`(순수 표시 + `onSelect`)로 추출 검토** — 잠금 판정·힌트 타이머는 상태가 얽혀 있으니 각 화면에 남기고 시트만 뽑는다. 세 번째 사용처가 생기면 그때는 미루지 말 것.
 - **관찰 노트 (조치 안 함 — Phase Q-0 검증 중 발견)**: 에뮬레이터를 **비행기 모드로 오래(≈10분) 두면** supabase-js의 토큰 갱신이 반복 실패하면서 세션이 로그인 화면으로 떨어진다. 다만 **콜드스타트하면 저장된 세션이 정상 복원**된다(실제로 확인). Q-0의 프로필 확인 경로와 **무관한 supabase-js 세션 갱신 쪽 동작**이고 스스로 복구되므로 손대지 않았다 — 오프라인 테스트 중 로그인 화면이 떠도 당황하지 말 것.
 - **무해 판정 경고 (조치 안 함, 이유 기록 — Phase M 조사에서 발견)**:
@@ -411,9 +412,11 @@
 - **RLS 검증 하네스**: `scripts/verify-friends-rls.sql` — 롤백 트랜잭션 안에서 `set local role authenticated` + `request.jwt.claims`로 특정 유저를 흉내내 정책을 실제로 검증하는 패턴(각 시나리오 결과를 temp table에 모아뒀다가 마지막에 한 번에 조회 — `supabase db query`가 멀티스테이트먼트 스크립트에서 마지막 statement 결과만 돌려주는 걸 발견해서 우회한 방식). 이후 posts/country_visits/friendships RLS를 다시 건드릴 때 이 파일을 복제해서 시나리오만 바꿔 재사용할 것. 복제본: `scripts/verify-likes-rls.sql`(Phase P), `scripts/verify-comments-rls.sql`(Phase Q-1).
   - ⭐ **verify-comments-rls.sql은 "리허설 겸 회귀" 2용도**: `[PART A]`에 마이그레이션 DDL을 인라인으로 넣어두고 통째로 rollback하므로, **db push 전에 라이브 DB에서 결과를 미리 볼 수 있다**(실데이터 무오염). push 이후엔 `[PART A]` 블록만 주석 처리하면 그대로 회귀 테스트가 된다. 앞으로 마이그레이션이 있는 작업은 이 형태를 기본으로 쓸 것.
   - ⚠️ 스크립트를 가공할 때 **PowerShell `Get-Content`/`Set-Content` 왕복 금지** — 기본 인코딩이 ANSI라 한글이 깨지면서 줄이 붙어 문법 오류가 난다(실제로 겪음). 행 단위 가공은 `sed`(바이트 안전)로 할 것.
-- ⭐ **검증 기준선 (2026-08-16 확정 — 여기가 유일한 기준, 다른 곳에 따로 적지 말 것)**:
-  > **comments 0 / post_likes 0 / 3계정 전부 public / friendships는 `test↔gp123` accepted 1행만 / sgg_visits 4행 전부 `#ff6a2b`**
-  - 나머지(참고): `posts` 7행(한국 4건 — 충주시·구례군·의성군·예천군, gp123), `country_visits` 4행, `sgg` 230행, `profiles` 3행 — 실제 수동 테스트 데이터이거나 참조 데이터라 정리 대상이 **아니다**.
+- ⭐ **검증 기준선 (2026-08-27 갱신 — 여기가 유일한 기준, 다른 곳에 따로 적지 말 것)**:
+  > **comments 0 / post_likes 0 / 3계정 전부 public / friendships는 `test↔gp123` accepted 1행만 / sgg_visits 4행 전부 `#ff6a2b` / posts 9행 / country_visits 5행**
+  - 나머지(참고): `sgg` 230행, `profiles` 3행 — 참조 데이터라 정리 대상이 **아니다**.
+  - **⭐ `posts` 9행 중 미국 글은 지우지 말 것 (2026-08-27 확정)**: Phase T 실기기 GPS 실측으로 만든 글이고, **`sgg_id`가 null로 처리되는 유일한 실데이터**다(국외 글이 시군구 그리드·색칠에 안 잡히는지 확인할 때 쓰인다). `country_visits`가 4 → 5로 는 것도 이 글 때문이며 **정상**이다.
+  - 한국 4건(충주시·구례군·의성군·예천군, gp123)도 그대로 둔다 — 시군구 관련 검증이 전부 이 4곳에 의존한다.
   - `test↔gp123` accepted 1행은 **의도적으로 남긴다** — 2계정 가시성 검증(친구공개 글, 시군구 방문 가시성 등)에 친구 쌍이 매번 필요하다. 지우지 말 것.
   - **⚠️ 계정 공개범위(`profiles.visibility`)는 현재 DB 상태에 의존하지 말고 검증 시나리오 초입에서 SQL로 명시적으로 세팅할 것** — Phase P에서 확정한 규칙, 기준선이 public이어도 직전 시나리오가 바꿔놨을 수 있다.
 - ⭐ **검증 후 정리 체크리스트 (에뮬 2계정 시나리오를 돌렸으면 매번 이 순서로 복구)**:
@@ -428,9 +431,10 @@
   - 같은 시기 `friendships`에도 `gp123 → mini` pending 잔재 1행(2026-07-20 Phase N/O 시절)이 남아 `mini` 프로필에 받은요청 뱃지가 계속 떠 있었다. 둘 다 2026-08-16에 정리 완료.
   - 기준선 확인 1줄 쿼리:
     ```
-    npx supabase db query --linked "select (select count(*) from comments) c, (select count(*) from post_likes) l, (select count(*) from profiles where visibility='public') pub, (select count(*) from friendships) fr, (select count(*) from friendships where status='accepted') fr_ok, (select count(*) from sgg_visits) sv, (select count(distinct color) from sgg_visits) sv_colors, (select count(*) from sgg) sgg;"
+    npx supabase db query --linked "select (select count(*) from comments) c, (select count(*) from post_likes) l, (select count(*) from profiles where visibility='public') pub, (select count(*) from friendships) fr, (select count(*) from friendships where status='accepted') fr_ok, (select count(*) from sgg_visits) sv, (select count(distinct color) from sgg_visits) sv_colors, (select count(*) from sgg) sgg, (select count(*) from posts) posts, (select count(*) from country_visits) cv;"
     ```
-    기대값: `c=0, l=0, pub=3, fr=1, fr_ok=1, sv=4, sv_colors=1(=#ff6a2b), sgg=230`
+    기대값: `c=0, l=0, pub=3, fr=1, fr_ok=1, sv=4, sv_colors=1(=#ff6a2b), sgg=230, posts=9, cv=5`
+    - ⭐ `posts`/`cv`도 기대값에 넣어둔다 — 검증용 임시 글을 지우지 않고 남기면 다음 세션에서 바로 눈에 띈다.
   - ⚠️ `supabase db query --linked`는 **한동안 안 쓰다 처음 치면 콜드스타트로 타임아웃**(`LegacyDbConfigLoginRoleStatusError`, "Failed to create login role: Connection terminated due to connection timeout")이 난다. 프로젝트가 죽은 게 아니라 그냥 깨어나는 중이니 **한두 번 더 치면 붙는다**(2026-08-16 실제로 3번째에 정상). 참고로 `db.<ref>.supabase.co`는 IPv6 전용이라 직접 psql 접속은 이 환경에서 안 된다 — CLI의 `--linked`(Management API 경유)를 쓸 것.
 
 ## 장소 기록 방식
@@ -495,6 +499,9 @@ profiles, friendships, cities, country_visits, posts, post_media, post_likes, co
   - **이 항목은 "글꼴 최대일 때 앱 전체가 깨진다"는 별도 보고와 같은 뿌리다** — 전역 정책(`AppText`의 기본 상한 등)은 Phase T 5순위에서 다룬다.
 - ⭐ **`components/ui/icon-symbol.tsx`의 `MAPPING`에 없는 이름은 조용히 아무것도 그리지 않는다.** `MaterialIcons`에 `name={undefined}`가 넘어가도 에러가 없다. 실제로 하단 탭 아이콘 2개가 **처음부터 안 보이는 상태였는데 아무도 눈치채지 못했다**(`map.fill`/`person.fill` 미등록). **아이콘을 쓸 때는 매핑에 있는지 먼저 확인할 것.**
 - ⭐ **`tabBarStyle`에 `height`를 직접 주지 말 것.** `@react-navigation/bottom-tabs`의 `getTabBarHeight`가 스타일에 `height`가 있으면 **그 값을 그대로 쓰고 하단 인셋을 더하지 않는다** → 제스처 바에 탭바가 먹힌다. 배경·테두리만 지정하고 높이·패딩 계산은 라이브러리에 맡긴다.
+- ⭐ **커스텀 폰트 텍스트가 오른쪽에 공간이 남는데도 마지막 글자가 잘린다 (2026-08-27)**: 지도 헤더 로고가 "Tintrail" → "Tintrai"/"Tintra"로 잘렸다. **컨테이너 폭 문제가 아니고 `letterSpacing`도 원인이 아니다**(음수 letterSpacing을 지웠더니 한 번은 멀쩡했다가 다음 렌더에서 더 심하게 잘렸다) — 안드로이드가 **커스텀 폰트 텍스트 폭을 실제 글리프보다 좁게 측정**하는 간헐적 문제다. `flexShrink: 0` + `paddingRight`로 여유를 줘서 막는다.
+  - ⚠️⚠️ **간헐적이라 1회 통과로 판정하면 안 된다** — 실제로 "고쳤다"고 오판했다가 다음 스크린샷에서 재발했다. **앱을 3회 재시작해 전부 온전한지 확인할 것.**
+- ⭐ **지도 최소 줌은 0이 하드 한계다 (MapLibre Native)**: 음수를 주면 `Not setting minZoomPreference, value is in unsupported range: -1.0` 로그와 함께 **조용히 무시된다**. 게다가 **줌 0에서도 경도가 다 안 들어온다**(월드 512dp vs 화면 411dp ≈ 80%) — 그래서 "세계지도를 한눈에"의 실질 선택지는 줌이 아니라 **초기 중심 경도**다.
 - 참고: **인셋 자체는 처음부터 정상이었다** — `useSafeAreaInsets()`가 `{top: 51.8, bottom: 24}`를 정상 반환하고(expo-router가 `SafeAreaProvider`를 이미 감싼다), 스크롤 화면들의 `paddingBottom`(설정 40 / 친구 80 / 프로필 32 / 나라 96 / 시군구 32 / 게시물 40)도 24dp보다 크다. **"하단이 먹힌다" = "인셋이 안 온다"로 넘겨짚지 말고 값을 먼저 찍어볼 것.**
 
 ## 트러블슈팅 (환경 이슈 — 재발 시 시간 아끼려고 기록)

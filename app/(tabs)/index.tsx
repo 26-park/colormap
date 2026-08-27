@@ -44,11 +44,16 @@ const SGG_MIN_ZOOM = 6;
 
 // 줌 버튼 동작 범위. 최소값은 초기 세계뷰(zoom 1)와 맞춘다 — 이보다 더 빼면
 // 지도가 화면보다 작아져 빈 배경만 늘어난다.
-const MIN_ZOOM = 1;
+const MIN_ZOOM = 0;
 const MAX_ZOOM = 16;
-const INITIAL_ZOOM = 1;
+const INITIAL_ZOOM = 0;
 const ZOOM_STEP = 1;
 const ZOOM_ANIM_MS = 300;
+
+// 한국지도 버튼이 이동할 위치. zoom은 SGG_MIN_ZOOM 이상이어야 시군구가 보인다.
+// center는 제주(33.1°)부터 최북단(38.6°)까지 들어오도록 남한 가운데로 잡았다.
+const KOREA_VIEW = { center: [127.8, 36.0] as [number, number], zoom: 6.2 };
+const KOREA_FLY_MS = 900;
 
 // 시군구 색 매핑. 나라와 같은 match 구조지만 키가 osm_id(숫자)다.
 // ⭐ sgg_code 를 키로 쓰면 안 된다 — 2026-07 신설된 인천 4개 구는 코드가 아직
@@ -91,6 +96,18 @@ export default function MapScreen() {
   // 연타 대비 — 진행 중인 애니메이션의 "목표" 줌. 이게 없으면 두 번째 탭이
   // 아직 안 끝난 첫 애니메이션의 중간값을 기준으로 계산해 한 단계를 까먹는다.
   const targetZoomRef = useRef<number | null>(null);
+
+  // 한국지도 버튼 — 시군구가 보이는 줌으로 이동한다.
+  // targetZoomRef를 같이 갱신해야 이동 직후 +/− 버튼이 중간값을 읽지 않는다.
+  const handleGoKorea = useCallback(() => {
+    targetZoomRef.current = KOREA_VIEW.zoom;
+    setZoom(KOREA_VIEW.zoom);
+    cameraRef.current?.flyTo({
+      center: KOREA_VIEW.center,
+      zoom: KOREA_VIEW.zoom,
+      duration: KOREA_FLY_MS,
+    });
+  }, []);
 
   const handleZoomBy = useCallback(async (delta: number) => {
     const current = targetZoomRef.current ?? (await mapRef.current?.getZoom()) ?? zoom;
@@ -203,7 +220,11 @@ export default function MapScreen() {
       >
         <Camera
           ref={cameraRef}
-          initialViewState={{ center: [0, 20], zoom: INITIAL_ZOOM }}
+          // ⭐ 첫 화면은 "세계지도"가 아니라 "내가 칠한 지도"다. 줌 0에서도 경도가
+          //    다 들어오지 않으므로(월드 512dp vs 화면 411dp) 중심을 어디에 두느냐가
+          //    무엇이 보이는지를 정한다 — 아시아 중심이면 색칠된 나라 대부분이
+          //    첫 화면에 들어온다(경도 0 중심이면 한 곳도 안 들어온다).
+          initialViewState={{ center: [100, 15], zoom: INITIAL_ZOOM }}
           minZoom={MIN_ZOOM}
           maxZoom={MAX_ZOOM}
         />
@@ -258,18 +279,16 @@ export default function MapScreen() {
         <View style={styles.headerRow}>
           <Text style={styles.logo}>Tintrail</Text>
 
-          {/* 평면지도/지구본 정적 토글 — 지구본 전환 기능은 다음 Phase */}
-          <View style={styles.togglePill}>
-            <View style={[styles.toggleOption, styles.toggleOptionActive]}>
-              <Text style={[styles.toggleText, styles.toggleTextActive]}>평면지도</Text>
-            </View>
-            <View style={styles.toggleOption}>
-              <Text style={styles.toggleText}>지구본</Text>
-            </View>
-          </View>
-
-          {/* 아바타 플레이스홀더 */}
-          <View style={styles.avatar} />
+          {/* 한국지도 바로가기 — 시군구가 보이는 줌으로 날아간다.
+              (이 자리에 있던 평면지도/지구본 토글은 삭제했다 — 지구본은
+               백로그로 내려간 기능이라 동작하지 않는 껍데기였다.) */}
+          <TouchableOpacity
+            style={styles.koreaBtn}
+            onPress={handleGoKorea}
+            accessibilityLabel="한국지도로 이동"
+          >
+            <Text style={styles.koreaBtnText}>한국지도</Text>
+          </TouchableOpacity>
         </View>
 
         {colorLoadError && (
@@ -331,7 +350,12 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontFamily: theme.fonts.bold,
     color: theme.colors.accent,
-    letterSpacing: -0.3,
+    // ⚠️ 안드로이드에서 커스텀 폰트 텍스트의 폭이 실제 글리프보다 좁게 측정돼
+    // 마지막 글자가 잘리는 일이 있다("Tintrail" → "Tintrai"/"Tintra").
+    // 오른쪽에 공간이 남는데도 잘리고, 렌더마다 재현이 들쭉날쭉하다.
+    // flexShrink: 0 으로 줄어들지 않게 하고 여유 폭을 줘서 막는다.
+    flexShrink: 0,
+    paddingRight: 6,
   },
   colorErrorBanner: {
     marginTop: 8,
@@ -348,42 +372,22 @@ const styles = StyleSheet.create({
     color: theme.colors.error,
   },
 
-  // 토글 필
-  togglePill: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(0,0,0,0.06)',
-    borderRadius: 20,
-    padding: 3,
-  },
-  toggleOption: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 17,
-  },
-  toggleOptionActive: {
+  // 한국지도 바로가기 버튼
+  koreaBtn: {
     backgroundColor: '#FFFFFF',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+    shadowOpacity: 0.12,
+    shadowRadius: 3,
     elevation: 2,
   },
-  toggleText: {
+  koreaBtnText: {
     fontSize: 13,
-    fontFamily: theme.fonts.medium,
-    color: theme.colors.textSecondary,
-  },
-  toggleTextActive: {
-    color: theme.colors.text,
     fontFamily: theme.fonts.semibold,
-  },
-
-  // 아바타
-  avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: theme.colors.accent,
+    color: theme.colors.text,
   },
 
   // ── 줌 버튼 ──
