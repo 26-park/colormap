@@ -79,6 +79,19 @@ export default function ProfileScreen() {
   const requestIdRef = useRef(0);
   const loadingRef = useRef(false);
 
+  // ⭐ 그리드 포커스 갱신 — "개수가 바뀌었을 때만" 리셋한다.
+  // 포커스마다 무조건 재조회하면 3페이지까지 스크롤한 상태에서 게시물 상세만
+  // 보고 돌아와도 목록이 1페이지로 줄고 스크롤이 튀며 스피너가 번쩍인다(+ 대표
+  // 사진 signed URL을 매번 다시 발급하게 되는데, 이건 "페이지 단위로만 발급"
+  // 원칙과도 부딪힌다). 그래서 포커스에서 이미 세고 있는 개수를 신호로 쓰고,
+  // 달라졌을 때만 기존 리셋 경로(아래 useEffect)를 그대로 태운다.
+  //
+  // 비교 기준은 현재 필터가 적용된 개수다 — 필터가 "일본"인데 한국 글을 추가한
+  // 경우처럼 화면에 영향이 없는 변화로는 리셋하지 않는다. 어느 필터에서 잰
+  // 값인지 같이 들고 있어야 필터 전환 직후를 변화로 오인하지 않는다.
+  const lastCountRef = useRef<{ cc: string | null; count: number } | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+
   // 받은 친구 요청 개수(뱃지 dot 용) — count 전용(head: true), 행 데이터는 가져오지
   // 않는다. 포커스마다 재조회(country/[cc].tsx와 동일 패턴) — 친구 화면에서
   // 수락/거절하고 돌아왔을 때 즉시 갱신되게 하기 위함.
@@ -120,15 +133,16 @@ export default function ProfileScreen() {
       });
   }, [session]);
 
-  // 통계 3개 — count만 가볍게 조회(head: true), 행 데이터는 안 가져온다.
+  // 통계 3개 + 필터된 개수 — count만 가볍게 조회(head: true), 행 데이터는 안 가져온다.
   // 포커스마다 재조회(위 뱃지 count와 동일 패턴) — 마운트 1회로 두면 탭이 계속
   // 살아있어서 친구 수락/끊기나 글 작성/삭제 후 숫자가 영영 안 맞는다.
+  // 여기서 잰 개수가 그리드 갱신 여부를 결정하는 신호도 된다(lastCountRef 참고).
   useFocusEffect(
     useCallback(() => {
       if (!userId) return;
 
       (async () => {
-        const [countriesRes, postsRes, friendsRes] = await Promise.all([
+        const [countriesRes, postsRes, friendsRes, filteredRes] = await Promise.all([
           supabase
             .from("country_visits")
             .select("id", { count: "exact", head: true })
@@ -142,6 +156,14 @@ export default function ProfileScreen() {
             .select("user_low", { count: "exact", head: true })
             .eq("status", "accepted")
             .or(`user_low.eq.${userId},user_high.eq.${userId}`),
+          // 필터가 없으면 위 전체 기록 수와 조건이 같으므로 쿼리를 아낀다.
+          selectedCc
+            ? supabase
+                .from("posts")
+                .select("id", { count: "exact", head: true })
+                .eq("user_id", userId)
+                .eq("country_code", selectedCc)
+            : Promise.resolve(null),
         ]);
 
         if (countriesRes.error)
@@ -149,6 +171,8 @@ export default function ProfileScreen() {
         if (postsRes.error) console.error("기록 수 조회 실패:", postsRes.error);
         if (friendsRes.error)
           console.error("친구 수 조회 실패:", friendsRes.error);
+        if (filteredRes?.error)
+          console.error("필터된 기록 수 조회 실패:", filteredRes.error);
 
         // 포커스마다 도는 조회라 실패 시 0으로 덮으면 숫자가 튄다(오프라인에서
         // 탭만 왕복해도 0이 됨) — 실패한 항목만 직전 값을 유지한다.
@@ -157,45 +181,51 @@ export default function ProfileScreen() {
           posts: postsRes.error ? prev.posts : (postsRes.count ?? 0),
           friends: friendsRes.error ? prev.friends : (friendsRes.count ?? 0),
         }));
+
+        // 필터된 개수 — 실패했으면 직전 값을 유지하고 그리드 갱신 판단도 건너뛴다
+        // (실패를 "변화"로 읽어 리셋해버리면 오프라인에서 목록이 날아간다).
+        const filtered = selectedCc
+          ? filteredRes?.error
+            ? null
+            : (filteredRes?.count ?? 0)
+          : postsRes.error
+            ? null
+            : (postsRes.count ?? 0);
+
+        if (filtered !== null) {
+          setFilteredCount(filtered);
+          const last = lastCountRef.current;
+          if (last && last.cc === selectedCc && last.count !== filtered) {
+            setReloadToken((t) => t + 1);
+          }
+          lastCountRef.current = { cc: selectedCc, count: filtered };
+        }
       })();
-    }, [userId]),
+    }, [userId, selectedCc]),
   );
 
-  // 나라 필터 칩 목록 — 내가 기록을 올린 나라만 (my_post_countries RPC)
-  useEffect(() => {
-    if (!userId) return;
-    supabase.rpc("my_post_countries").then(({ data, error }) => {
-      if (error) {
-        console.error("my_post_countries 조회 실패:", error);
-        return;
-      }
-      const codes: string[] = (data ?? []).map(
-        (row: { country_code: string }) => row.country_code,
-      );
-      codes.sort((a: string, b: string) =>
-        getCountryNameKo(a).localeCompare(getCountryNameKo(b), "ko"),
-      );
-      setChips(codes);
-    });
-  }, [userId]);
-
-  // 필터된 개수(그리드 헤더 "내 기록 N") — 통계 카드의 전체 기록 수(stats.posts)와는
-  // 별개로, 현재 선택된 나라 필터와 동일한 조건으로 가볍게 다시 센다.
-  useEffect(() => {
-    if (!userId) return;
-
-    (async () => {
-      let query = supabase
-        .from("posts")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", userId);
-      if (selectedCc) query = query.eq("country_code", selectedCc);
-
-      const { count, error } = await query;
-      if (error) console.error("필터된 기록 수 조회 실패:", error);
-      setFilteredCount(count ?? 0);
-    })();
-  }, [userId, selectedCc]);
+  // 나라 필터 칩 목록 — 내가 기록을 올린 나라만 (my_post_countries RPC).
+  // 포커스마다 재조회 — 마운트 1회로 두면 새 나라에 글을 써도 칩이 안 생긴다
+  // (실기기에서 미국 글을 쓰고 프로필로 왔을 때 실제로 보고된 증상).
+  // 페이지네이션과 무관한 목록이라 무조건 갱신해도 부작용이 없다.
+  useFocusEffect(
+    useCallback(() => {
+      if (!userId) return;
+      supabase.rpc("my_post_countries").then(({ data, error }) => {
+        if (error) {
+          console.error("my_post_countries 조회 실패:", error);
+          return;
+        }
+        const codes: string[] = (data ?? []).map(
+          (row: { country_code: string }) => row.country_code,
+        );
+        codes.sort((a: string, b: string) =>
+          getCountryNameKo(a).localeCompare(getCountryNameKo(b), "ko"),
+        );
+        setChips(codes);
+      });
+    }, [userId]),
+  );
 
   // 한 페이지(PAGE_SIZE개) 조회 — 대표사진(order_index 최소) 추출 후, 이번에 새로
   // 받은 대표사진만 resolveMediaUrls로 signed URL 발급(전체 일괄발급 방지).
@@ -282,7 +312,10 @@ export default function ProfileScreen() {
     [userId],
   );
 
-  // 필터/정렬이 바뀌면 처음부터 다시 로드
+  // 필터/정렬이 바뀌면 처음부터 다시 로드.
+  // reloadToken은 위 포커스 조회가 "개수가 바뀌었다"고 판단했을 때만 올라간다 —
+  // 리셋 로직 자체는 손대지 않고 이 의존성만 추가해서, 검증된 경로를 그대로
+  // 재사용한다.
   useEffect(() => {
     if (!userId) return;
 
@@ -297,7 +330,7 @@ export default function ProfileScreen() {
     setLoadMoreError(false);
 
     loadPage(0, selectedCc, sortAsc, requestId);
-  }, [userId, selectedCc, sortAsc, loadPage]);
+  }, [userId, selectedCc, sortAsc, loadPage, reloadToken]);
 
   const handleEndReached = useCallback(() => {
     if (loadingRef.current || !hasMore) return;
