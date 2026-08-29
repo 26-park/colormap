@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { StyleSheet, View, TouchableOpacity, type NativeSyntheticEvent } from 'react-native';
+import { Image, StyleSheet, View, TouchableOpacity, type NativeSyntheticEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
@@ -224,6 +224,16 @@ export default function MapScreen() {
         ref={mapRef}
         style={StyleSheet.absoluteFillObject}
         mapStyle={MAP_STYLE as any} // TODO: StyleSpecification 타입으로 교체
+        // ⭐ 실기기에서 "한국지도 버튼 뒤에 검은 동그라미"로 보고된 것의 정체는
+        //    MapLibre 기본 나침반이다. compassHiddenFacingNorth 기본값이 true라
+        //    평소엔 숨어 있다가 지도가 북쪽을 안 볼 때(=회전했을 때) 우상단에
+        //    나타난다 — 핀치 줌 중에 두 손가락이 살짝 돌아가면 쉽게 회전된다.
+        //    에뮬레이터 마우스 조작으로는 회전이 잘 일어나지 않아 못 봤던 것.
+        // 색칠 지도는 북쪽 고정이 자연스러우므로 회전·기울임 자체를 끈다
+        // (회전된 채로는 한국이 비스듬히 보여 읽기도 어렵다).
+        compass={false}
+        touchRotate={false}
+        touchPitch={false}
         onRegionDidChange={(e) => {
           // 제스처로 움직였을 수도 있으므로 실제값 기준으로 목표를 리셋한다.
           setZoom(e.nativeEvent.zoom);
@@ -316,9 +326,20 @@ export default function MapScreen() {
       {/* ── 상단 헤더 오버레이 ── */}
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <View style={styles.headerRow}>
-          {/* 지도 위에 떠 있는 고정 오버레이라 시스템 글꼴 배율을 따르지 않는다
-              (탭바와 같은 판단) — 확대되면 지도를 가리고 글자도 잘린다. */}
-          <Text style={styles.logo} allowFontScaling={false}>Tintrail</Text>
+          {/* ⭐ 로고는 텍스트가 아니라 이미지다.
+              안드로이드에서 Pretendard 텍스트의 측정 폭이 실제 글리프보다 좁게
+              잡혀 마지막 글자가 잘렸다("Tintrail" → "Tintrai"/"Tintra").
+              letterSpacing 제거 → flexShrink+paddingRight → allowFontScaling=false
+              로 세 번 대응했지만 실기기에서 계속 재발했다. 이미지는 측정이
+              개입하지 않아 모든 기기에서 픽셀이 같다.
+              에셋 생성: scripts/make-logo.py (Pretendard-Bold 20dp, accent 색) */}
+          <Image
+            source={require('@/assets/images/logo-wordmark.png')}
+            style={styles.logo}
+            resizeMode="contain"
+            accessibilityRole="image"
+            accessibilityLabel="Tintrail"
+          />
 
           {/* 한국지도 바로가기 — 시군구가 보이는 줌으로 날아간다.
               (이 자리에 있던 평면지도/지구본 토글은 삭제했다 — 지구본은
@@ -387,16 +408,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
   },
+  // scripts/make-logo.py가 뽑은 1x 크기(70x20dp). 에셋을 다시 만들면
+  // 스크립트가 출력하는 1x 크기로 이 값을 맞출 것.
   logo: {
-    fontSize: 20,
-    fontFamily: theme.fonts.bold,
-    color: theme.colors.accent,
-    // ⚠️ 안드로이드에서 커스텀 폰트 텍스트의 폭이 실제 글리프보다 좁게 측정돼
-    // 마지막 글자가 잘리는 일이 있다("Tintrail" → "Tintrai"/"Tintra").
-    // 오른쪽에 공간이 남는데도 잘리고, 렌더마다 재현이 들쭉날쭉하다.
-    // flexShrink: 0 으로 줄어들지 않게 하고 여유 폭을 줘서 막는다.
-    flexShrink: 0,
-    paddingRight: 6,
+    width: 70,
+    height: 20,
   },
   colorErrorBanner: {
     marginTop: 8,

@@ -17,17 +17,15 @@ export default function TabLayout() {
           backgroundColor: theme.colors.background,
           borderTopColor: theme.colors.border,
         },
-        // 탭바는 높이가 고정이라(49dp + 하단 인셋) 시스템 글꼴 배율이 그대로
-        // 곱해지면 "지도" → "지…"로 잘린다(갤럭시 보고, font_scale 1.5로 재현).
-        // 라벨은 아이콘과 함께 뜻을 전달하므로 여기서는 확대를 끈다.
-        // ⚠️ 커스텀 라벨 컴포넌트로 maxFontSizeMultiplier를 주는 방식은 쓰지 말 것 —
-        //    tabBarLabel이 함수면 라이브러리가 labelBeneath 스타일을 입히지 않아
-        //    폭이 좁아지고 오히려 더 잘린다(실측).
-        tabBarAllowFontScaling: false,
-        tabBarLabelStyle: {
-          fontSize: 11,
-          fontFamily: theme.fonts.medium,
-        },
+        // ⭐ 라벨을 아예 두지 않는다 — 아이콘만.
+        // "지도" → "지…", "프로필" → "프로…" 잘림을 두 번 고쳤지만(글꼴 배율
+        // 상한 → tabBarAllowFontScaling: false) 실기기에서 계속 재발했다.
+        // 원인은 배율이 아니라 Pretendard 텍스트의 측정 폭이 실제보다 좁게
+        // 잡히는 것이고, 라벨은 numberOfLines: 1 로 렌더돼(@react-navigation/
+        // elements Label.js) 폭이 모자라면 말줄임이 된다.
+        // 글자를 없애면 이 문제 자체가 성립하지 않는다. 탭이 2개뿐이고
+        // 아이콘(지도·사람)이 뜻을 분명히 전달한다.
+        tabBarShowLabel: false,
       }}
     >
       <Tabs.Screen
