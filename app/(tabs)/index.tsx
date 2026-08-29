@@ -316,7 +316,9 @@ export default function MapScreen() {
       {/* ── 상단 헤더 오버레이 ── */}
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <View style={styles.headerRow}>
-          <Text style={styles.logo}>Tintrail</Text>
+          {/* 지도 위에 떠 있는 고정 오버레이라 시스템 글꼴 배율을 따르지 않는다
+              (탭바와 같은 판단) — 확대되면 지도를 가리고 글자도 잘린다. */}
+          <Text style={styles.logo} allowFontScaling={false}>Tintrail</Text>
 
           {/* 한국지도 바로가기 — 시군구가 보이는 줌으로 날아간다.
               (이 자리에 있던 평면지도/지구본 토글은 삭제했다 — 지구본은
@@ -326,7 +328,7 @@ export default function MapScreen() {
             onPress={handleGoKorea}
             accessibilityLabel="한국지도로 이동"
           >
-            <Text style={styles.koreaBtnText}>한국지도</Text>
+            <Text style={styles.koreaBtnText} allowFontScaling={false}>한국지도</Text>
           </TouchableOpacity>
         </View>
 

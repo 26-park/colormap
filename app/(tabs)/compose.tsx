@@ -100,6 +100,24 @@ export default function ComposeScreen() {
         return;
       }
 
+      // ⭐ 먼저 마지막으로 알려진 위치로 핀을 즉시 찍는다.
+      // getCurrentPositionAsync는 새 측위를 기다리므로 실기기(특히 실내)에서
+      // 몇 초씩 걸린다 — expo-location 공식 문서도 "빠른 응답이 필요하면
+      // getLastKnownPositionAsync를 쓰라"고 권한다. 캐시가 없으면 null이라
+      // 그때는 기존과 동일하게 새 측위만 기다린다.
+      // maxAge/requiredAccuracy로 너무 오래됐거나 부정확한 캐시는 걸러낸다.
+      const lastKnown = await Location.getLastKnownPositionAsync({
+        maxAge: 2 * 60 * 1000,
+        requiredAccuracy: 500,
+      });
+      if (lastKnown) {
+        handleCoordPicked(lastKnown.coords.longitude, lastKnown.coords.latitude);
+      }
+
+      // 그다음 실제 측위로 핀을 정정한다. 이게 끝나야 게시가 열린다
+      // (canPost가 gpsLoading을 보므로) — 캐시 좌표로 저장돼 서버의 시군구
+      // 판정이 어긋나는 걸 막기 위함이다. 사용자 입장에서 "게시 가능해지는
+      // 시점"은 예전과 같고, 핀과 지도만 먼저 움직인다.
       const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       handleCoordPicked(position.coords.longitude, position.coords.latitude);
     } catch (err) {
@@ -178,7 +196,11 @@ export default function ComposeScreen() {
   }
 
   const uploadingCount = photos.filter((p) => p.status === 'resizing' || p.status === 'uploading').length;
-  const canPost = !!pickedCoord && !!countryMatch && uploadingCount === 0 && !saving;
+  // gpsLoading을 포함하는 이유: 현재 위치 버튼은 캐시 좌표로 핀을 먼저 찍고
+  // 실제 측위로 정정한다. 그 사이에 저장되면 캐시 좌표가 그대로 남아 서버의
+  // 시군구 판정이 어긋날 수 있다. (예전에도 측위가 끝나야 핀이 생겼으므로
+  // 게시가 열리는 시점 자체는 늦어지지 않는다.)
+  const canPost = !!pickedCoord && !!countryMatch && uploadingCount === 0 && !saving && !gpsLoading;
 
   async function handleSave() {
     const userId = session?.user.id;
@@ -279,6 +301,11 @@ export default function ComposeScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* 캐시 좌표로 핀을 먼저 찍은 상태 — 실제 측위가 끝나면 핀이 살짝
+            움직일 수 있으므로 그 이유를 알려준다. */}
+        {gpsLoading && pickedCoord && (
+          <Text style={styles.hintText}>위치를 더 정확하게 맞추는 중…</Text>
+        )}
         {locationError && <Text style={styles.errorText}>{locationError}</Text>}
         {pickedCoord && !countryMatch && !locationError && (
           <Text style={styles.errorText}>나라를 찾을 수 없어요. 다른 위치를 선택해주세요.</Text>
@@ -450,6 +477,10 @@ const styles = StyleSheet.create({
   errorText: {
     fontSize: 13,
     color: theme.colors.error,
+  },
+  hintText: {
+    fontSize: 13,
+    color: theme.colors.textSecondary,
   },
 
   // 위치 미니맵

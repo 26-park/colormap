@@ -495,8 +495,11 @@ profiles, friendships, cities, country_visits, posts, post_media, post_likes, co
   - 화면 하단에 **고정된** 입력 바가 있으면 `insets.bottom`을 따로 더하되 **키보드가 올라오면 빼야 한다**(안 그러면 키보드와 입력 바 사이에 빈 띠가 생긴다). `Keyboard.addListener('keyboardDidShow'/'keyboardDidHide')`로 처리 — 안드로이드는 `Will*` 이벤트가 발생하지 않으므로 `Did*`만 쓴다.
 - ⭐ **글자 잘림의 원인을 폭 부족으로 단정하지 말 것 — 시스템 글꼴 배율이 진짜 원인인 경우가 있다.** 탭 라벨이 "지도"→"지…"로 잘린다는 보고를 **에뮬 기본(1.0)에서는 재현 못 했고, `adb shell settings put system font_scale 1.5`로 즉시 재현**했다. 사용자 폰의 글꼴 크기가 기본보다 크게 잡혀 있었던 것.
   - **재현 명령**: `adb shell settings put system font_scale 1.5` (되돌리기: `1.0`). 레이아웃 관련 보고를 받으면 **이 배율부터 올려볼 것.**
-  - 높이가 고정된 UI(탭바, 헤더, 칩)의 텍스트에는 `maxFontSizeMultiplier` 상한을 준다. 탭 라벨은 1.2로 고정했다.
-  - **이 항목은 "글꼴 최대일 때 앱 전체가 깨진다"는 별도 보고와 같은 뿌리다** — 전역 정책(`AppText`의 기본 상한 등)은 Phase T 5순위에서 다룬다.
+  - **전역 정책은 3층 구조다 (2026-08-28, Phase T 5순위에서 확정)**:
+    1. **`components/AppText.tsx`에 기본 상한 1.3** — 앱 전체 `Text`가 이 파일 하나를 통과하므로(18개 파일 전부 여기서 import) 한 곳만 막으면 전역에 걸린다. 상한이 없으면 `font_scale 1.5`에서 `@gp123`→`@gp12`, `나라·기록·친구`→`나·기·친`, 칩이 `대한민`·`미`·`일`로 잘리고 "내 기록 N"의 숫자가 사라진다(실측).
+    2. **탭바는 확대를 끈다** (`tabBarAllowFontScaling: false`) — 높이가 고정(49dp+인셋)이라 늘어날 공간이 없다.
+    3. **지도 헤더(로고·한국지도 버튼)도 끈다** (`allowFontScaling={false}`) — 지도 위 고정 오버레이라 커지면 지도를 가리고 글자도 잘린다.
+  - ⚠️⚠️ **정정 — 탭 라벨에 커스텀 컴포넌트로 `maxFontSizeMultiplier`를 주지 말 것**: 처음엔 `tabBarLabel`에 자체 컴포넌트를 넘겨 상한을 줬는데 **오히려 더 잘렸다.** 라이브러리 소스를 보면 `tabBarLabel`이 **함수면 `styles.labelBeneath`를 입히지 않고 그대로 렌더**한다(`@react-navigation/bottom-tabs` `lib/module/views/BottomTabItem.js:73`) — 그래서 라벨 폭이 좁아진다. **`tabBarAllowFontScaling: false` + `tabBarLabelStyle`을 쓸 것.**
 - ⭐ **`components/ui/icon-symbol.tsx`의 `MAPPING`에 없는 이름은 조용히 아무것도 그리지 않는다.** `MaterialIcons`에 `name={undefined}`가 넘어가도 에러가 없다. 실제로 하단 탭 아이콘 2개가 **처음부터 안 보이는 상태였는데 아무도 눈치채지 못했다**(`map.fill`/`person.fill` 미등록). **아이콘을 쓸 때는 매핑에 있는지 먼저 확인할 것.**
 - ⭐ **`tabBarStyle`에 `height`를 직접 주지 말 것.** `@react-navigation/bottom-tabs`의 `getTabBarHeight`가 스타일에 `height`가 있으면 **그 값을 그대로 쓰고 하단 인셋을 더하지 않는다** → 제스처 바에 탭바가 먹힌다. 배경·테두리만 지정하고 높이·패딩 계산은 라이브러리에 맡긴다.
 - ⭐ **커스텀 폰트 텍스트가 오른쪽에 공간이 남는데도 마지막 글자가 잘린다 (2026-08-27)**: 지도 헤더 로고가 "Tintrail" → "Tintrai"/"Tintra"로 잘렸다. **컨테이너 폭 문제가 아니고 `letterSpacing`도 원인이 아니다**(음수 letterSpacing을 지웠더니 한 번은 멀쩡했다가 다음 렌더에서 더 심하게 잘렸다) — 안드로이드가 **커스텀 폰트 텍스트 폭을 실제 글리프보다 좁게 측정**하는 간헐적 문제다. `flexShrink: 0` + `paddingRight`로 여유를 줘서 막는다.
@@ -509,6 +512,9 @@ profiles, friendships, cities, country_visits, posts, post_media, post_likes, co
   - **글자 크기는 9→15 보간을 선택했다**(줌 6→11). 11→17도 만들어 비교했는데 읽기는 편하지만 **겹쳐 숨는 라벨이 늘어 예천군이 안동시에 밀렸다** — 색칠한 지역의 이름이 가려지면 이 기능의 목적("구분이 안 된다")에 반한다.
   - 성능: 팬 6회 + 줌 6회 연속 조작 중 **Choreographer 프레임 드롭 0건**. 230개 심볼은 부담이 아니다.
 - ⭐ **지도 최소 줌은 0이 하드 한계다 (MapLibre Native)**: 음수를 주면 `Not setting minZoomPreference, value is in unsupported range: -1.0` 로그와 함께 **조용히 무시된다**. 게다가 **줌 0에서도 경도가 다 안 들어온다**(월드 512dp vs 화면 411dp ≈ 80%) — 그래서 "세계지도를 한눈에"의 실질 선택지는 줌이 아니라 **초기 중심 경도**다.
+- ⭐ **"현재 위치"가 느린 건 `getCurrentPositionAsync`가 새 측위를 기다리기 때문이다 (2026-08-28)**: expo-location 공식 문서도 *"빠른 응답이 필요하면 `getLastKnownPositionAsync`를 쓰라"* 고 권한다. **캐시 위치로 핀을 즉시 찍고 실제 측위로 정정**하는 2단계로 바꿨다(`maxAge` 2분 / `requiredAccuracy` 500m로 오래되거나 부정확한 캐시는 배제).
+  - ⚠️ **`canPost`에 `!gpsLoading`을 넣어야 한다** — 캐시 좌표 상태로 저장되면 **서버의 시군구 판정(`set_post_sgg`)이 어긋난다.** 게시가 열리는 시점은 예전과 같고(예전에도 측위가 끝나야 핀이 생겼다) 핀과 지도만 먼저 움직인다.
+  - ⚠️ **효과는 에뮬레이터에서 측정할 수 없다** — 합성 GPS라 즉시 응답한다. **실기기에서만 확인 가능한 항목.**
 - 참고: **인셋 자체는 처음부터 정상이었다** — `useSafeAreaInsets()`가 `{top: 51.8, bottom: 24}`를 정상 반환하고(expo-router가 `SafeAreaProvider`를 이미 감싼다), 스크롤 화면들의 `paddingBottom`(설정 40 / 친구 80 / 프로필 32 / 나라 96 / 시군구 32 / 게시물 40)도 24dp보다 크다. **"하단이 먹힌다" = "인셋이 안 온다"로 넘겨짚지 말고 값을 먼저 찍어볼 것.**
 
 ## 트러블슈팅 (환경 이슈 — 재발 시 시간 아끼려고 기록)
