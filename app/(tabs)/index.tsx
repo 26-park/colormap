@@ -56,6 +56,10 @@ const ZOOM_ANIM_MS = 300;
 
 // 한국지도 버튼이 이동할 위치. zoom은 SGG_MIN_ZOOM 이상이어야 시군구가 보인다.
 // center는 제주(33.1°)부터 최북단(38.6°)까지 들어오도록 남한 가운데로 잡았다.
+// 첫 화면(그리고 지도 탭으로 돌아왔을 때) 카메라. 아래 initialViewState와
+// 포커스 복귀가 같은 값을 써야 하므로 상수로 뽑았다.
+const INITIAL_CENTER: [number, number] = [100, 15];
+
 const KOREA_VIEW = { center: [127.8, 36.0] as [number, number], zoom: 6.2 };
 const KOREA_FLY_MS = 900;
 
@@ -108,6 +112,31 @@ export default function MapScreen() {
   // 연타 대비 — 진행 중인 애니메이션의 "목표" 줌. 이게 없으면 두 번째 탭이
   // 아직 안 끝난 첫 애니메이션의 중간값을 기준으로 계산해 한 단계를 까먹는다.
   const targetZoomRef = useRef<number | null>(null);
+
+  // ⭐ 지도 탭으로 돌아오면 첫 화면 카메라로 되돌린다.
+  // 이 앱의 지도는 "탐색"보다 "내 색칠 조망"이 목적이라 기본 상태가 초기 뷰인
+  // 게 맞다(사용자 요청).
+  //
+  // 다만 상세 화면(시군구·나라)에 갔다 돌아온 경우는 보던 자리를 유지한다 —
+  // 방금 탭한 지역을 다시 찾아가게 만들면 안 된다.
+  // useFocusEffect 만으로는 "탭 전환"과 "스택 복귀"를 구분할 수 없지만,
+  // 지도에서 상세로 나가는 경로가 아래 두 onPress 핸들러뿐이므로 나갈 때
+  // 표시를 남기는 것으로 정확히 구분된다.
+  const skipCameraResetRef = useRef(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (skipCameraResetRef.current) {
+        skipCameraResetRef.current = false;
+        return;
+      }
+      // 애니메이션 없이 즉시 되돌린다 — 탭 전환 자체에 전환 효과가 있어서
+      // 여기서 또 날아가면 시선을 끌고 느리게 느껴진다.
+      cameraRef.current?.jumpTo({ center: INITIAL_CENTER, zoom: INITIAL_ZOOM });
+      targetZoomRef.current = null;
+      setZoom(INITIAL_ZOOM);
+    }, []),
+  );
 
   // 한국지도 버튼 — 시군구가 보이는 줌으로 이동한다.
   // targetZoomRef를 같이 갱신해야 이동 직후 +/− 버튼이 중간값을 읽지 않는다.
@@ -197,6 +226,8 @@ export default function MapScreen() {
     const nm = feature?.properties?.nm;
     if (!cc) return; // 바다 / 코드 없는 지점(Siachen 등) 무시
 
+    // 상세에서 돌아올 때는 카메라를 초기화하지 않는다(위 useFocusEffect 참고)
+    skipCameraResetRef.current = true;
     router.push({ pathname: '/country/[cc]', params: { cc, nm } } as any);
   }
 
@@ -214,6 +245,8 @@ export default function MapScreen() {
     const name = feature?.properties?.name;
     if (osmId == null) return;
 
+    // 상세에서 돌아올 때는 카메라를 초기화하지 않는다(위 useFocusEffect 참고)
+    skipCameraResetRef.current = true;
     router.push({ pathname: '/sgg/[osmId]', params: { osmId: String(osmId), name } } as any);
   }
 
@@ -246,7 +279,7 @@ export default function MapScreen() {
           //    다 들어오지 않으므로(월드 512dp vs 화면 411dp) 중심을 어디에 두느냐가
           //    무엇이 보이는지를 정한다 — 아시아 중심이면 색칠된 나라 대부분이
           //    첫 화면에 들어온다(경도 0 중심이면 한 곳도 안 들어온다).
-          initialViewState={{ center: [100, 15], zoom: INITIAL_ZOOM }}
+          initialViewState={{ center: INITIAL_CENTER, zoom: INITIAL_ZOOM }}
           minZoom={MIN_ZOOM}
           maxZoom={MAX_ZOOM}
         />

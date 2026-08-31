@@ -328,6 +328,12 @@
     - 비교 기준은 **현재 필터가 적용된 개수**이고, 어느 필터에서 잰 값인지(`{cc, count}`)를 같이 들고 있어야 **필터 전환 직후를 변화로 오인하지 않는다.** 조회 실패 시에는 판단 자체를 건너뛴다 — 실패를 "변화"로 읽으면 오프라인에서 목록이 날아간다.
     - ⚠️ **알려진 한계 (의도적으로 안 고침)**: 프로필 그리드 갱신은 `filteredCount` 변화를 신호로 쓴다. **같은 필터에서 삭제 1건 + 작성 1건이 동시에 일어나 개수가 그대로면 갱신되지 않는다.** 다음 포커스에 개수가 한 번이라도 바뀌면 해소된다. 원천 차단하려면 최신 글 id 비교가 필요한데 쿼리가 늘어 **비용 대비 가치가 낮다고 판단**했다.
   - **지도 초기 뷰 중심이 고정값이다 (2026-08-27, Phase T 3순위)**: `initialViewState`의 중심을 경도 100(아시아)으로 못박아 뒀다. 줌 0에서도 경도가 다 안 들어와서 중심 선택이 곧 "첫 화면에 뭐가 보이나"가 되는데, **해외 사용자에겐 아시아 중심이 안 맞는다.** 사용자의 `country_visits` 무게중심으로 잡는 방안을 검토할 것 — 지금은 한국 사용자 위주라 고정으로 충분하다.
+  - ⭐ **지도 카메라 복귀 규칙 (2026-08-31, Phase T 3순위 — 확정)**: 지도 탭으로 **돌아오면 첫 화면 카메라로 리셋**하고, **상세(시군구·나라)에 갔다 돌아온 경우는 보던 자리를 유지**한다. 이 앱의 지도는 "탐색"이 아니라 "내 색칠 조망"이 목적이라 기본 상태가 초기 뷰인 게 맞고, 방금 탭한 지역을 다시 찾아가게 만들면 안 되기 때문이다.
+    - ⚠️ **`useFocusEffect`만으로는 "탭 전환"과 "스택 복귀"를 구분할 수 없다** — 두 경우 모두 같은 focus 이벤트가 온다. 대신 **지도에서 상세로 나가는 경로가 `handleCountryPress`/`handleSggPress` 두 onPress 핸들러뿐**이라, 나갈 때 `skipCameraResetRef`를 세우는 것으로 정확히 갈린다.
+    - ⚠️⚠️ **ref는 1회 소비 후 반드시 지울 것.** 안 지우면 리셋이 **영구히 죽는데**, 그 버그는 "유지" 시나리오(상세 갔다 뒤로)만 봐서는 **안 드러난다** — 상세 왕복 직후에 탭을 전환해 리셋되는지 보는 대조(검증 C7)가 있어야 잡힌다.
+    - **`jumpTo`(애니메이션 없음)를 쓴다** — 탭 전환 자체에 이미 전환 효과가 있어서 카메라까지 날아가면 시선을 끌고 느리게 느껴진다. 사용자 요청도 "앱 처음 켰을 때 지도 화면처럼"이라 그냥 그 상태로 있는 것이 맞다.
+    - `INITIAL_CENTER` 상수를 `initialViewState`와 포커스 복귀가 **공유**한다 — 한쪽만 고치면 첫 화면과 복귀 화면이 어긋난다.
+    - **알려진 한계(의도)**: 앱을 백그라운드에 보냈다가 복귀하는 것은 네비게이션 포커스가 아니라 **리셋되지 않는다.** 쓰던 화면이 유지되는 게 자연스럽다고 판단했다.
   - **색 팔레트 바텀시트가 두 곳에 중복 (Phase S-6에서 발생)**: `COLOR_PALETTE` 8색 시트 UI가 나라상세(`app/country/[cc].tsx`)와 시군구상세(`app/sgg/[osmId].tsx`) 양쪽에 같은 모양으로 있다. **S-6에서는 의도적으로 복사했다** — 나라상세를 건드리면 회귀 리스크가 생기고 S-6 범위를 넓히게 되기 때문. **`components/ColorPaletteSheet.tsx`(순수 표시 + `onSelect`)로 추출 검토** — 잠금 판정·힌트 타이머는 상태가 얽혀 있으니 각 화면에 남기고 시트만 뽑는다. 세 번째 사용처가 생기면 그때는 미루지 말 것.
 - **관찰 노트 (조치 안 함 — Phase Q-0 검증 중 발견)**: 에뮬레이터를 **비행기 모드로 오래(≈10분) 두면** supabase-js의 토큰 갱신이 반복 실패하면서 세션이 로그인 화면으로 떨어진다. 다만 **콜드스타트하면 저장된 세션이 정상 복원**된다(실제로 확인). Q-0의 프로필 확인 경로와 **무관한 supabase-js 세션 갱신 쪽 동작**이고 스스로 복구되므로 손대지 않았다 — 오프라인 테스트 중 로그인 화면이 떠도 당황하지 말 것.
 - **무해 판정 경고 (조치 안 함, 이유 기록 — Phase M 조사에서 발견)**:
@@ -412,10 +418,11 @@
 - **RLS 검증 하네스**: `scripts/verify-friends-rls.sql` — 롤백 트랜잭션 안에서 `set local role authenticated` + `request.jwt.claims`로 특정 유저를 흉내내 정책을 실제로 검증하는 패턴(각 시나리오 결과를 temp table에 모아뒀다가 마지막에 한 번에 조회 — `supabase db query`가 멀티스테이트먼트 스크립트에서 마지막 statement 결과만 돌려주는 걸 발견해서 우회한 방식). 이후 posts/country_visits/friendships RLS를 다시 건드릴 때 이 파일을 복제해서 시나리오만 바꿔 재사용할 것. 복제본: `scripts/verify-likes-rls.sql`(Phase P), `scripts/verify-comments-rls.sql`(Phase Q-1).
   - ⭐ **verify-comments-rls.sql은 "리허설 겸 회귀" 2용도**: `[PART A]`에 마이그레이션 DDL을 인라인으로 넣어두고 통째로 rollback하므로, **db push 전에 라이브 DB에서 결과를 미리 볼 수 있다**(실데이터 무오염). push 이후엔 `[PART A]` 블록만 주석 처리하면 그대로 회귀 테스트가 된다. 앞으로 마이그레이션이 있는 작업은 이 형태를 기본으로 쓸 것.
   - ⚠️ 스크립트를 가공할 때 **PowerShell `Get-Content`/`Set-Content` 왕복 금지** — 기본 인코딩이 ANSI라 한글이 깨지면서 줄이 붙어 문법 오류가 난다(실제로 겪음). 행 단위 가공은 `sed`(바이트 안전)로 할 것.
-- ⭐ **검증 기준선 (2026-08-27 갱신 — 여기가 유일한 기준, 다른 곳에 따로 적지 말 것)**:
-  > **comments 0 / post_likes 0 / 3계정 전부 public / friendships는 `test↔gp123` accepted 1행만 / sgg_visits 4행 전부 `#ff6a2b` / posts 9행 / country_visits 5행**
+- ⭐ **검증 기준선 (2026-08-31 갱신 — 여기가 유일한 기준, 다른 곳에 따로 적지 말 것)**:
+  > **comments 0 / post_likes 0 / 3계정 전부 public / friendships는 `test↔gp123` accepted 1행만 / sgg_visits 4행 전부 `#ff6a2b` / posts 8행 / country_visits 4행**
   - 나머지(참고): `sgg` 230행, `profiles` 3행 — 참조 데이터라 정리 대상이 **아니다**.
-  - **⭐ `posts` 9행 중 미국 글은 지우지 말 것 (2026-08-27 확정)**: Phase T 실기기 GPS 실측으로 만든 글이고, **`sgg_id`가 null로 처리되는 유일한 실데이터**다(국외 글이 시군구 그리드·색칠에 안 잡히는지 확인할 때 쓰인다). `country_visits`가 4 → 5로 는 것도 이 글 때문이며 **정상**이다.
+  - **⭐ `posts` 8행 중 미국 글 2건은 지우지 말 것 (2026-08-27 확정)**: Phase T 실기기 GPS 실측으로 만든 글이고, **`sgg_id`가 null로 처리되는 유일한 실데이터**다(국외 글이 시군구 그리드·색칠에 안 잡히는지 확인할 때 쓰인다). `country_visits`에 US가 있는 것도 이 글 때문이며 **정상**이다.
+  - ⚠️ **일본 글 1건은 2026-08-29 실기기 삭제 테스트로 사라졌다 (기준선을 9→8, cv 5→4로 낮춘 이유)**. 트리거가 `country_visits`의 JP 행까지 정상 정리했다. 현재 구성은 `AU 1 / KR 4 / TH 1 / US 2`. **DB가 진실이고 문서가 따라간다 — 기준선이 안 맞으면 문서부터 의심하지 말고 무엇이 바뀌었는지 먼저 확인할 것.**
   - 한국 4건(충주시·구례군·의성군·예천군, gp123)도 그대로 둔다 — 시군구 관련 검증이 전부 이 4곳에 의존한다.
   - `test↔gp123` accepted 1행은 **의도적으로 남긴다** — 2계정 가시성 검증(친구공개 글, 시군구 방문 가시성 등)에 친구 쌍이 매번 필요하다. 지우지 말 것.
   - **⚠️ 계정 공개범위(`profiles.visibility`)는 현재 DB 상태에 의존하지 말고 검증 시나리오 초입에서 SQL로 명시적으로 세팅할 것** — Phase P에서 확정한 규칙, 기준선이 public이어도 직전 시나리오가 바꿔놨을 수 있다.
@@ -433,7 +440,7 @@
     ```
     npx supabase db query --linked "select (select count(*) from comments) c, (select count(*) from post_likes) l, (select count(*) from profiles where visibility='public') pub, (select count(*) from friendships) fr, (select count(*) from friendships where status='accepted') fr_ok, (select count(*) from sgg_visits) sv, (select count(distinct color) from sgg_visits) sv_colors, (select count(*) from sgg) sgg, (select count(*) from posts) posts, (select count(*) from country_visits) cv;"
     ```
-    기대값: `c=0, l=0, pub=3, fr=1, fr_ok=1, sv=4, sv_colors=1(=#ff6a2b), sgg=230, posts=9, cv=5`
+    기대값: `c=0, l=0, pub=3, fr=1, fr_ok=1, sv=4, sv_colors=1(=#ff6a2b), sgg=230, posts=8, cv=4`
     - ⭐ `posts`/`cv`도 기대값에 넣어둔다 — 검증용 임시 글을 지우지 않고 남기면 다음 세션에서 바로 눈에 띈다.
   - ⚠️ `supabase db query --linked`는 **한동안 안 쓰다 처음 치면 콜드스타트로 타임아웃**(`LegacyDbConfigLoginRoleStatusError`, "Failed to create login role: Connection terminated due to connection timeout")이 난다. 프로젝트가 죽은 게 아니라 그냥 깨어나는 중이니 **한두 번 더 치면 붙는다**(2026-08-16 실제로 3번째에 정상). 참고로 `db.<ref>.supabase.co`는 IPv6 전용이라 직접 psql 접속은 이 환경에서 안 된다 — CLI의 `--linked`(Management API 경유)를 쓸 것.
 
@@ -493,7 +500,10 @@ profiles, friendships, cities, country_visits, posts, post_media, post_likes, co
 - ⭐⭐ **Pretendard 텍스트의 측정 폭이 실제 글리프보다 좁다** — 실기기에서 일관되게 재현되고 에뮬에서는 산발적이다. **가로 여백이 흡수 가능한지가 갈랐다**: 한국지도 버튼(14dp) 정상 / 로고(6dp) 잘림 / 탭 라벨(0dp) 말줄임. 탭 라벨은 `numberOfLines: 1`로 렌더돼(`@react-navigation/elements` `Label.js`) 폭이 모자라면 "지…"가 된다.
   - **글꼴 배율은 원인이 아니다** — `tabBarAllowFontScaling`은 정상 전달되고(`BottomTabBar.js:310`), 라벨 가로 배치는 화면 폭 768dp 이상에서만 일어난다(갤럭시 해당 없음).
   - ⚠️ **경험적 패딩으로 두 번 빗나갔다.** 중요한 텍스트가 잘리면 **이미지나 시스템 폰트**로 가서 측정을 개입시키지 말 것. 로고는 **PNG 워드마크**(`scripts/make-logo.py`, @1x/@2x/@3x)로, 탭 라벨은 **아이콘만**(`tabBarShowLabel: false`)으로 바꿔 문제 클래스 자체를 없앴다.
-- ⭐ **판정 규칙**: **터치 회전 / 폰트 측정 / 시스템 글꼴 배율 / 실제 GPS / 제조사 키보드**가 얽힌 항목은 **에뮬 통과를 해결 근거로 삼지 말 것.** 에뮬은 "안 고쳐졌다"는 반증에는 쓸 수 있어도 "고쳐졌다"는 증명에는 못 쓴다.
+- ⭐⭐ **`dragPan` 함정 — 스크롤 컨테이너 안에 지도를 넣을 때는 반드시 명시할 것**: 작성 화면 미니맵을 조작하면 **부모 `ScrollView`가 같이 움직였다.** JS의 `dragPan`은 네이티브 `scrollEnabled`로 가는데(`MLRNMapViewManager.kt:122`), 이 필드는 `Boolean? = null`로 시작해 **프롭을 실제로 넘겨야 채워진다**. 부모의 터치 가로채기를 막는 코드가 **`scrollEnabled == true`일 때만** 돌기 때문에(`MLRNMapView.kt:568-575`의 `onTouchEvent` → `requestDisallowInterceptTouchEvent`) `null`이면 차단이 안 걸린다.
+  - ⚠️ **문서상 `dragPan` 기본값은 `true`라 헷갈린다** — 지도 팬 자체는 되므로 프롭이 없어도 정상으로 보인다. **"기본 동작"과 "부모 터치 차단"은 별개다.**
+  - 핀을 끌어 옮기려면 `Marker`가 아니라 **`ViewAnnotation` + `draggable`** 을 쓴다(안드로이드 네이티브 심볼 드래그 구현이 있어 터치 핸들러가 필요 없다). `onDragEnd`의 `lngLat`은 `[lng, lat]` 배열이다.
+- ⭐ **판정 규칙**: **터치 회전 / 폰트 측정 / 시스템 글꼴 배율 / 실제 GPS / 제조사 키보드 / 멀티터치 제스처 충돌**이 얽힌 항목은 **에뮬 통과를 해결 근거로 삼지 말 것.** 에뮬은 "안 고쳐졌다"는 반증에는 쓸 수 있어도 "고쳐졌다"는 증명에는 못 쓴다.
 
 ## 안드로이드 화면 함정 (2026-08-26, Phase T 실기기 1순위에서 전부 실측 확인)
 
