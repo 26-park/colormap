@@ -4,13 +4,13 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  TextInput,
   View,
 } from 'react-native';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Text } from '@/components/AppText';
+import { TextInput } from '@/components/AppTextInput';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/auth';
 import { theme } from '@/constants/theme';

@@ -5,7 +5,6 @@ import {
   Image,
   ScrollView,
   StyleSheet,
-  TextInput,
   TouchableOpacity,
   View,
   type NativeSyntheticEvent,
@@ -19,6 +18,7 @@ import * as Crypto from 'expo-crypto';
 import * as Location from 'expo-location';
 import { Map, Camera, ViewAnnotation, GeoJSONSource, Layer, type PressEvent } from '@maplibre/maplibre-react-native';
 import { Text } from '@/components/AppText';
+import { TextInput } from '@/components/AppTextInput';
 import { VisibilitySelector } from '@/components/VisibilitySelector';
 import { theme } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';

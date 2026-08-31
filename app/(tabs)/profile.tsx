@@ -640,6 +640,7 @@ const styles = StyleSheet.create({
   username: {
     marginTop: 14,
     fontSize: 18,
+    paddingRight: 8,
     fontFamily: theme.fonts.bold,
     color: theme.colors.text,
   },
@@ -737,6 +738,7 @@ const styles = StyleSheet.create({
   },
   gridTitle: {
     fontSize: 16,
+    paddingRight: 8,
     fontFamily: theme.fonts.bold,
     color: theme.colors.text,
   },

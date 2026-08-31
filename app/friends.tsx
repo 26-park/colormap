@@ -5,12 +5,12 @@ import {
   FlatList,
   Pressable,
   StyleSheet,
-  TextInput,
   View,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Text } from '@/components/AppText';
+import { TextInput } from '@/components/AppTextInput';
 import { ErrorView } from '@/components/ErrorView';
 import { theme } from '@/constants/theme';
 import { useAuth } from '@/context/auth';
