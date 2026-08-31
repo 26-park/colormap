@@ -17,7 +17,7 @@ import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { decode } from 'base64-arraybuffer';
 import * as Crypto from 'expo-crypto';
 import * as Location from 'expo-location';
-import { Map, Camera, Marker, GeoJSONSource, Layer, type PressEvent } from '@maplibre/maplibre-react-native';
+import { Map, Camera, ViewAnnotation, GeoJSONSource, Layer, type PressEvent } from '@maplibre/maplibre-react-native';
 import { Text } from '@/components/AppText';
 import { VisibilitySelector } from '@/components/VisibilitySelector';
 import { theme } from '@/constants/theme';
@@ -274,11 +274,29 @@ export default function ComposeScreen() {
         {/* ── 위치 ── */}
         <View style={styles.sectionHeaderRow}>
           <Text style={styles.sectionTitle}>위치</Text>
-          <Text style={styles.sectionHint}>지도를 탭해 위치를 옮기세요</Text>
+          <Text style={styles.sectionHint}>지도를 탭하거나 핀을 끌어 옮기세요</Text>
         </View>
 
         <View style={styles.mapWrap}>
-          <Map style={styles.map} mapStyle={PICKER_MAP_STYLE as any} onPress={handleMapPress}>
+          <Map
+            style={styles.map}
+            mapStyle={PICKER_MAP_STYLE as any}
+            onPress={handleMapPress}
+            // ⭐⭐ dragPan을 명시하지 않으면 미니맵을 조작할 때 부모 ScrollView가
+            //    같이 스크롤된다(실기기 보고). 네이티브가 부모의 터치 가로채기를
+            //    막는 코드는 `scrollEnabled == true` 일 때만 도는데
+            //    (MLRNMapView.kt onTouchEvent → requestDisallowInterceptTouchEvent),
+            //    이 필드는 prop을 실제로 넘겨야 채워진다. 넘기지 않으면 null 이라
+            //    조건을 통과하지 못한다 — 문서상 기본값이 true 라 헷갈리지만,
+            //    "기본 동작"과 "부모 차단"은 별개다. 스크롤 안에 지도를 넣을 때는
+            //    반드시 명시할 것.
+            dragPan
+            // 위치 선택용 지도라 회전·기울임은 필요 없고, 회전되면 나침반이
+            // 떠서 화면을 가린다(지도 탭과 같은 판단).
+            compass={false}
+            touchRotate={false}
+            touchPitch={false}
+          >
             <Camera
               initialViewState={{ center: initialCenter ?? [127.5, 36], zoom: initialCenter ? 3 : 2 }}
             />
@@ -287,9 +305,19 @@ export default function ComposeScreen() {
               <Layer id="compose-country-border" type="line" paint={{ 'line-color': '#FFFFFF', 'line-width': 0.8 }} />
             </GeoJSONSource>
             {pickedCoord && (
-              <Marker lngLat={[pickedCoord.lng, pickedCoord.lat]}>
+              // Marker 는 드래그를 지원하지 않아 ViewAnnotation 으로 바꿨다.
+              // draggable 은 네이티브 구현이라 터치 핸들러를 직접 만들 필요가 없다.
+              <ViewAnnotation
+                id="compose-pin"
+                lngLat={[pickedCoord.lng, pickedCoord.lat]}
+                draggable
+                onDragEnd={(e) => {
+                  const [lng, lat] = e.nativeEvent.lngLat;
+                  handleCoordPicked(lng, lat);
+                }}
+              >
                 <View style={styles.pin} />
-              </Marker>
+              </ViewAnnotation>
             )}
           </Map>
 
