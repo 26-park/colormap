@@ -14,6 +14,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Text } from '@/components/AppText';
 import { theme } from '@/constants/theme';
+import { SHOW_ALL_POSTS_TAB } from '@/constants/features';
 import { COLOR_PALETTE } from '@/constants/palette';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/auth';
@@ -263,7 +264,10 @@ export default function CountryDetailScreen() {
         )}
       </View>
 
-      {/* 내 기록 / 모두 탭 */}
+      {/* 내 기록 / 모두 탭 — SHOW_ALL_POSTS_TAB 이 false 면 세그먼트를 통째로
+          감춘다(탭이 하나면 누를 수도 없는 칩만 남는다). activeTab 상태와 'all'
+          조회 분기는 그대로 두므로 상수만 true 로 되돌리면 복구된다. */}
+      {SHOW_ALL_POSTS_TAB && (
       <View style={styles.tabRow}>
         <Pressable
           style={[styles.tab, activeTab === 'mine' && styles.tabSelected]}
@@ -278,6 +282,7 @@ export default function CountryDetailScreen() {
           <Text style={[styles.tabText, activeTab === 'all' && styles.tabTextSelected]}>모두</Text>
         </Pressable>
       </View>
+      )}
 
       {/* 본문 — 게시물 사진 그리드 */}
       <View style={styles.body}>

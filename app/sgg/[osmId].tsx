@@ -14,6 +14,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Text } from '@/components/AppText';
 import { theme } from '@/constants/theme';
+import { SHOW_ALL_POSTS_TAB } from '@/constants/features';
 import { COLOR_PALETTE } from '@/constants/palette';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/auth';
@@ -348,7 +349,7 @@ export default function SggDetailScreen() {
 
       {/* 내 기록 / 모두 탭 — 경계(uuid)를 모르면 조회 자체가 불가능하므로 그때는
           띄우지 않는다(눌러도 아무 일도 안 하는 탭을 만들지 않기 위함). */}
-      {sgg && (
+      {SHOW_ALL_POSTS_TAB && sgg && (
         <View style={styles.tabRow}>
           <Pressable
             style={[styles.tab, activeTab === 'mine' && styles.tabSelected]}
