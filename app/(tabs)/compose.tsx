@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -29,6 +29,12 @@ import { savePost, type PostVisibility } from '@/lib/posts';
 import countriesGeoJSON from '@/assets/geo/countries.json';
 
 const MAX_PHOTOS = 10;
+// 현재 위치 측위에 씌우는 상한. expo-location의 getCurrentPositionAsync에는
+// 타임아웃 옵션이 없다(LocationOptions는 accuracy/mayShowUserSettingsDialog/
+// timeInterval/distanceInterval 4개뿐) — 측위가 안 잡히면 promise가 영원히
+// resolve되지 않아 gpsLoading이 굳고, 그러면 게시 버튼이 영영 안 열린다.
+// 실내·지하·약전계에서 실제로 일어나는 상황이라 밖에서 상한을 씌운다.
+const GPS_TIMEOUT_MS = 15000;
 const MAX_DIMENSION = 1600;
 const JPEG_QUALITY = 0.8;
 
@@ -41,10 +47,27 @@ const PICKER_MAP_STYLE = {
   ],
 };
 
+// ⚠️ race로 빠져나가도 네이티브 측위는 계속 돌고 나중에 resolve될 수 있다.
+// 늦은 응답이 사용자가 그새 직접 찍은 핀을 덮어쓰는 건 호출부의 세대 ref가 막는다
+// (gpsRequestIdRef — Phase D-2/I의 requestIdRef 패턴과 같은 것).
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([
+    promise,
+    new Promise<null>((resolve) => { setTimeout(() => resolve(null), ms); }),
+  ]);
+}
+
 type PickedCoord = {
   lng: number;
   lat: number;
 };
+
+// 핀 좌표의 출처. canPost 가드를 좁히는 데 쓴다 — 아래 awaitingFix 참고.
+//  'gps-cache' = 캐시 좌표로 임시로 찍은 핀. **정정이 예정돼 있다.**
+//  'gps'       = 실제 측위로 확정된 좌표
+//  'manual'    = 사용자가 지도를 탭하거나 핀을 끌어 지정한 좌표.
+//                정정이 오지 않으므로 곧바로 게시 가능하다.
+type CoordSource = 'gps-cache' | 'gps' | 'manual';
 
 type PhotoStatus = 'resizing' | 'uploading' | 'done' | 'error';
 
@@ -69,8 +92,17 @@ export default function ComposeScreen() {
 
   const [pickedCoord, setPickedCoord] = useState<PickedCoord | null>(null);
   const [countryMatch, setCountryMatch] = useState<CountryMatch | null>(null);
+  const [coordSource, setCoordSource] = useState<CoordSource | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
+  // 진행을 막지 않는 안내(핀은 있고 게시도 가능한 상태) — 빨간 errorText 대신
+  // 회색 hintText로 보여준다. 붉게 띄우면 못 쓰는 상태로 오해된다.
+  const [locationNotice, setLocationNotice] = useState<string | null>(null);
   const [gpsLoading, setGpsLoading] = useState(false);
+  // ⭐ 진행 중인 측위 요청의 세대. 늦게 도착한 응답이 그새 사용자가 직접 찍은
+  // 핀을 덮어쓰는 것을 막는다 — 타임아웃으로 race에서 빠져나와도 네이티브
+  // 측위는 계속 돌기 때문에 이 가드가 없으면 "핀 찍고 글 쓰는 중에 갑자기
+  // 위치가 바뀌는" 버그가 난다.
+  const gpsRequestIdRef = useRef(0);
 
   const [placeLabel, setPlaceLabel] = useState('');
   const [caption, setCaption] = useState('');
@@ -79,22 +111,46 @@ export default function ComposeScreen() {
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
   const [saving, setSaving] = useState(false);
 
-  function handleCoordPicked(lng: number, lat: number) {
+  function handleCoordPicked(lng: number, lat: number, source: CoordSource) {
     setLocationError(null);
+    setLocationNotice(null);
     setPickedCoord({ lng, lat });
+    setCoordSource(source);
     setCountryMatch(getCountryFromCoord(lng, lat));
+  }
+
+  // 진행 중인 측위를 무효화하고 로딩을 해제한다. 세대만 올리고 끝내면
+  // 그 요청의 finally가 stale로 판정돼 gpsLoading을 못 내리므로(그게 바로
+  // 이번에 고치는 버그다) 여기서 같이 내린다.
+  function cancelGpsRequest() {
+    gpsRequestIdRef.current += 1;
+    setGpsLoading(false);
+  }
+
+  // 사용자가 직접 찍은 핀은 언제나 진실이다 — 진행 중인 측위가 있으면
+  // 취소해서 늦은 응답이 이 핀을 덮어쓰지 못하게 한다.
+  function handleManualPick(lng: number, lat: number) {
+    cancelGpsRequest();
+    handleCoordPicked(lng, lat, 'manual');
   }
 
   function handleMapPress(event: NativeSyntheticEvent<PressEvent>) {
     const [lng, lat] = event.nativeEvent.lngLat;
-    handleCoordPicked(lng, lat);
+    handleManualPick(lng, lat);
   }
 
   async function handleUseCurrentLocation() {
+    const requestId = ++gpsRequestIdRef.current;
+    // 이 요청이 아직 최신인가. 사용자가 지도를 탭했거나(handleManualPick)
+    // 취소했거나 버튼을 다시 눌렀으면 세대가 올라가 stale이 된다.
+    const isStale = () => gpsRequestIdRef.current !== requestId;
+
     setLocationError(null);
+    setLocationNotice(null);
     setGpsLoading(true);
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
+      if (isStale()) return;
       if (!permission.granted) {
         setLocationError('위치 권한이 거부됐어요. 지도에서 직접 선택해주세요.');
         return;
@@ -110,21 +166,43 @@ export default function ComposeScreen() {
         maxAge: 2 * 60 * 1000,
         requiredAccuracy: 500,
       });
+      if (isStale()) return;
       if (lastKnown) {
-        handleCoordPicked(lastKnown.coords.longitude, lastKnown.coords.latitude);
+        handleCoordPicked(lastKnown.coords.longitude, lastKnown.coords.latitude, 'gps-cache');
       }
 
-      // 그다음 실제 측위로 핀을 정정한다. 이게 끝나야 게시가 열린다
-      // (canPost가 gpsLoading을 보므로) — 캐시 좌표로 저장돼 서버의 시군구
-      // 판정이 어긋나는 걸 막기 위함이다. 사용자 입장에서 "게시 가능해지는
-      // 시점"은 예전과 같고, 핀과 지도만 먼저 움직인다.
-      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      handleCoordPicked(position.coords.longitude, position.coords.latitude);
+      // 그다음 실제 측위로 핀을 정정한다. 캐시 핀 상태에서는 이게 끝나야
+      // 게시가 열린다(awaitingFix) — 곧 덮어써질 좌표로 저장돼 서버의 시군구
+      // 판정이 어긋나는 걸 막기 위함이다.
+      // ⭐ 단 상한을 씌운다. 그냥 await하면 측위가 안 잡힐 때 영영 안 끝나고
+      //    gpsLoading이 굳어 게시가 영구히 막힌다(T-2에서 고친 버그).
+      const position = await withTimeout(
+        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+        GPS_TIMEOUT_MS,
+      );
+      if (isStale()) return;
+
+      if (!position) {
+        // 타임아웃. 캐시 핀이 있으면 버리지 않고 남긴다 — 대략적이라도
+        // 출발점이 있는 편이 낫고, 사용자가 끌어서 맞출 수 있다.
+        // 이 시점부터는 정정이 오지 않으므로 'manual'로 승격해 게시를 연다.
+        if (lastKnown) {
+          setCoordSource('manual');
+          setLocationNotice('정확한 위치를 잡지 못했어요. 핀이 대략 위치에 있으니 끌어서 맞춰주세요.');
+        } else {
+          setLocationError('현재 위치를 가져오지 못했어요. 지도에서 직접 선택해주세요.');
+        }
+        return;
+      }
+
+      handleCoordPicked(position.coords.longitude, position.coords.latitude, 'gps');
     } catch (err) {
+      if (isStale()) return;
       console.error('[C-2-2b] 현재 위치 획득 실패:', err);
       setLocationError('현재 위치를 가져오지 못했어요. 지도에서 직접 선택해주세요.');
     } finally {
-      setGpsLoading(false);
+      // stale이면 gpsLoading은 새 요청(또는 취소)이 이미 소유하고 있다.
+      if (!isStale()) setGpsLoading(false);
     }
   }
 
@@ -196,11 +274,13 @@ export default function ComposeScreen() {
   }
 
   const uploadingCount = photos.filter((p) => p.status === 'resizing' || p.status === 'uploading').length;
-  // gpsLoading을 포함하는 이유: 현재 위치 버튼은 캐시 좌표로 핀을 먼저 찍고
-  // 실제 측위로 정정한다. 그 사이에 저장되면 캐시 좌표가 그대로 남아 서버의
-  // 시군구 판정이 어긋날 수 있다. (예전에도 측위가 끝나야 핀이 생겼으므로
-  // 게시가 열리는 시점 자체는 늦어지지 않는다.)
-  const canPost = !!pickedCoord && !!countryMatch && uploadingCount === 0 && !saving && !gpsLoading;
+  // ⭐ 게시를 막아야 하는 건 "곧 덮어써질 캐시 좌표"일 때뿐이다.
+  // 예전엔 gpsLoading 자체를 조건에 걸었는데, 그러면 측위가 진행 중인 동안
+  // **사용자가 지도를 직접 탭해 찍은 핀으로도 게시가 안 됐다** — 측위가 영영
+  // 안 끝나면 영구 차단이었다(T-2). 가드의 의도(캐시 좌표 저장 방지)는 그대로
+  // 두고 조건만 좁힌다. 직접 찍은 핀('manual')은 정정이 오지 않으므로 즉시 열린다.
+  const awaitingFix = gpsLoading && coordSource === 'gps-cache';
+  const canPost = !!pickedCoord && !!countryMatch && uploadingCount === 0 && !saving && !awaitingFix;
 
   async function handleSave() {
     const userId = session?.user.id;
@@ -313,7 +393,7 @@ export default function ComposeScreen() {
                 draggable
                 onDragEnd={(e) => {
                   const [lng, lat] = e.nativeEvent.lngLat;
-                  handleCoordPicked(lng, lat);
+                  handleManualPick(lng, lat);
                 }}
               >
                 <View style={styles.pin} />
@@ -321,19 +401,30 @@ export default function ComposeScreen() {
             )}
           </Map>
 
-          <TouchableOpacity style={styles.gpsChip} onPress={handleUseCurrentLocation} disabled={gpsLoading}>
-            {gpsLoading
-              ? <ActivityIndicator size="small" color={theme.colors.accent} />
-              : <Text style={styles.gpsChipText}>현재 위치</Text>
-            }
+          {/* 측위 중에는 '취소'로 바뀐다 — 상한(15초)이 있어도 그동안 갇혀 있게
+              두면 안 되고, "GPS 없이 그냥 지도에서 찍겠다"가 이 기능의 요구다.
+              disabled로 막아두면 재시도조차 못 한다(예전 동작). */}
+          <TouchableOpacity
+            style={styles.gpsChip}
+            onPress={gpsLoading ? cancelGpsRequest : handleUseCurrentLocation}
+          >
+            {gpsLoading ? (
+              <View style={styles.gpsChipBusy}>
+                <ActivityIndicator size="small" color={theme.colors.accent} />
+                <Text style={styles.gpsChipText}>취소</Text>
+              </View>
+            ) : (
+              <Text style={styles.gpsChipText}>현재 위치</Text>
+            )}
           </TouchableOpacity>
         </View>
 
         {/* 캐시 좌표로 핀을 먼저 찍은 상태 — 실제 측위가 끝나면 핀이 살짝
             움직일 수 있으므로 그 이유를 알려준다. */}
-        {gpsLoading && pickedCoord && (
+        {awaitingFix && (
           <Text style={styles.hintText}>위치를 더 정확하게 맞추는 중…</Text>
         )}
+        {locationNotice && <Text style={styles.hintText}>{locationNotice}</Text>}
         {locationError && <Text style={styles.errorText}>{locationError}</Text>}
         {pickedCoord && !countryMatch && !locationError && (
           <Text style={styles.errorText}>나라를 찾을 수 없어요. 다른 위치를 선택해주세요.</Text>
@@ -542,6 +633,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.12,
     shadowRadius: 4,
     elevation: 4,
+  },
+  gpsChipBusy: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   gpsChipText: {
     fontSize: 12,
