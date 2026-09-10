@@ -24,9 +24,12 @@ import { theme } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/auth';
 import { getCountryFromCoord, getCountryCentroid, type CountryMatch } from '@/lib/countryFromCoord';
+import { getSggBounds } from '@/lib/sggGeo';
 import { getCountryNameKo } from '@/lib/countryNamesKo';
 import { savePost, type PostVisibility } from '@/lib/posts';
 import countriesGeoJSON from '@/assets/geo/countries.json';
+// 지도 탭이 이미 import 하는 같은 모듈 — 번들에 한 번만 들어가므로 용량 증가가 없다.
+import sggGeoJSON from '@/data/kr-sgg/sgg_kr_render.json';
 
 const MAX_PHOTOS = 10;
 // 현재 위치 측위에 씌우는 상한. expo-location의 getCurrentPositionAsync에는
@@ -82,10 +85,29 @@ type PhotoItem = {
 export default function ComposeScreen() {
   const { session } = useAuth();
   const router = useRouter();
-  // 나라상세 "기록 추가"에서 넘어온 진입 나라 — 미니맵 초기 카메라 위치용일 뿐,
-  // 최종 country_code는 항상 핀 좌표에서 파생한다(핀이 진실).
-  const { cc: entryCc } = useLocalSearchParams<{ cc?: string; nm?: string }>();
+  // 진입 화면이 넘겨준 값들. **전부 미니맵 초기 카메라와 복귀 경로에만 쓰인다** —
+  // 최종 country_code 는 언제나 핀 좌표에서 파생한다(핀이 진실). 그래서 시군구에서
+  // 열어도 사용자가 핀을 다른 나라로 옮기면 헤더·저장이 그 나라를 따라간다.
+  //
+  // returnTo 를 두는 이유: 저장 후 복귀를 **호출부가 정한다**. 없으면 compose 가
+  // 항상 나라상세로 pop 하는데, 시군구에서 열었을 땐 스택에 나라상세가 없어서
+  // POP_TO 가 "현재 화면을 지우고 새로 얹는" 분기로 빠진다(@react-navigation/
+  // routers StackRouter.tsx) — 크래시는 아니지만 스택이 어긋난다.
+  // 기본값(생략)이 'country' 라 나라상세 경로는 동작이 그대로다.
+  const {
+    cc: entryCc,
+    returnTo,
+    sggOsmId,
+    sggName,
+  } = useLocalSearchParams<{
+    cc?: string;
+    returnTo?: 'country' | 'sgg';
+    sggOsmId?: string;
+    sggName?: string;
+  }>();
   const initialCenter = entryCc ? getCountryCentroid(entryCc) : null;
+  // 시군구에서 진입했으면 그 시군구 전체가 담기도록 bounds 로 연다.
+  const sggBounds = sggOsmId ? getSggBounds(Number(sggOsmId)) : null;
 
   // savePost(C-2-3a)와 사진 업로드 경로가 같은 postId를 공유 — 게시 전에도 미리 생성해둔다.
   const [postId] = useState(() => Crypto.randomUUID());
@@ -309,7 +331,16 @@ export default function ComposeScreen() {
       // 달라도 그 하나뿐인 country 화면을 찾아 그대로 재사용하고 params만 새 나라로
       // 덮어쓴다(별도 나라 분기 불필요). 포커스 전환이 일어나므로 나라상세의
       // useFocusEffect가 새 cc로 다시 조회해 방금 올린 게시물이 그리드에 뜬다.
-      router.dismissTo({ pathname: '/country/[cc]', params: { cc: countryMatch.cc, nm: countryMatch.nm } } as any);
+      // 복귀는 **들어온 화면으로 고정**한다. 시군구에서 열었을 때 저장된 글이 어느
+      // 시군구인지는 클라이언트가 모른다 — sgg_id 는 서버 트리거(set_post_sgg)가
+      // 계산하고 savePost 는 아무것도 돌려주지 않기 때문이다. 알아내려면 저장 후
+      // 추가 조회 + sgg_id→osm_relation_id 역매핑이 필요한데, 핀을 일부러 그
+      // 시군구 밖으로 옮긴 드문 경우를 위해 쿼리를 늘릴 값어치가 없다.
+      if (returnTo === 'sgg' && sggOsmId) {
+        router.dismissTo({ pathname: '/sgg/[osmId]', params: { osmId: sggOsmId, name: sggName } } as any);
+      } else {
+        router.dismissTo({ pathname: '/country/[cc]', params: { cc: countryMatch.cc, nm: countryMatch.nm } } as any);
+      }
     } catch (err) {
       console.error('[C-2-3a] 저장 실패:', err);
       Alert.alert('저장 실패', '잠시 후 다시 시도해주세요.');
@@ -378,12 +409,34 @@ export default function ComposeScreen() {
             touchPitch={false}
           >
             <Camera
-              initialViewState={{ center: initialCenter ?? [127.5, 36], zoom: initialCenter ? 3 : 2 }}
+              initialViewState={
+                sggBounds
+                  // ⚠️ padding 을 키우면 지도가 그만큼 더 축소돼 군도(옹진군 등)에서
+                  //    육지가 더 작아진다. 가장자리에 닿지 않을 만큼만 준다.
+                  ? { bounds: sggBounds, padding: { top: 16, right: 16, bottom: 16, left: 16 } }
+                  : { center: initialCenter ?? [127.5, 36], zoom: initialCenter ? 3 : 2 }
+              }
             />
             <GeoJSONSource id="compose-countries" data={countriesGeoJSON as any}>
               <Layer id="compose-country-fill" type="fill" paint={{ 'fill-color': '#CDD2D8', 'fill-opacity': 1 }} />
               <Layer id="compose-country-border" type="line" paint={{ 'line-color': '#FFFFFF', 'line-width': 0.8 }} />
             </GeoJSONSource>
+            {/* ⭐ 시군구 진입일 때만, 그 시군구 외곽선 한 겹.
+                미니맵은 나라 fill 만 그리므로, bounds 로 확대해 열면 화면이 균일한
+                회색 한 덩어리가 되어 **어디까지가 그 시군구인지 알 수 없다**
+                ("확대는 됐는데 그 시군구가 안 보이는" 절반 상태).
+                filter 로 진입한 하나만 그리므로 나라상세 경로에는 이 소스가 아예
+                렌더되지 않는다. fill 은 주지 않는다 — 핀 색과 섞인다. */}
+            {sggBounds && (
+              <GeoJSONSource id="compose-sgg" data={sggGeoJSON as any}>
+                <Layer
+                  id="compose-sgg-line"
+                  type="line"
+                  filter={['==', ['get', 'osm_id'], Number(sggOsmId)] as any}
+                  paint={{ 'line-color': theme.colors.accent, 'line-width': 2 }}
+                />
+              </GeoJSONSource>
+            )}
             {pickedCoord && (
               // Marker 는 드래그를 지원하지 않아 ViewAnnotation 으로 바꿨다.
               // draggable 은 네이티브 구현이라 터치 핸들러를 직접 만들 필요가 없다.

@@ -9,7 +9,7 @@ import {
   StyleSheet,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Text } from '@/components/AppText';
@@ -52,6 +52,7 @@ type GridPost = {
 
 export default function SggDetailScreen() {
   const { osmId, name } = useLocalSearchParams<{ osmId: string; name?: string }>();
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const { session } = useAuth();
   const [sgg, setSgg] = useState<SggRow | null>(null);
@@ -423,6 +424,28 @@ export default function SggDetailScreen() {
         )}
       </View>
 
+      {/* 기록 추가 진입점 (Phase T 5순위).
+          ⚠️ 나라상세(app/country/[cc].tsx)와 같은 FAB 이 두 곳에 있다 — 팔레트
+          시트에 이어 두 번째 복사다(CLAUDE.md 알려진 갭). 세 번째가 생기면 추출.
+          ⭐ returnTo/sggOsmId 를 넘겨야 저장 후 이 화면으로 돌아온다. 안 넘기면
+             compose 가 나라상세로 pop 을 시도하는데 스택에 없어서 어긋난다. */}
+      <Pressable
+        style={[styles.addFab, { bottom: insets.bottom + 16 }]}
+        onPress={() =>
+          router.push({
+            pathname: '/compose',
+            params: {
+              returnTo: 'sgg',
+              sggOsmId: osmId,
+              sggName: sgg?.name ?? name,
+            },
+          } as any)
+        }
+      >
+        <Text style={styles.addFabPlus}>+</Text>
+        <Text style={styles.addFabText}>기록 추가</Text>
+      </Pressable>
+
       {/* 색 팔레트 바텀시트 — v1: 고정 8색만 (컬러휠/hex는 v1.2 유료).
           ⚠️ 나라상세(app/country/[cc].tsx)와 같은 시트가 두 곳에 있다 —
           ColorPaletteSheet 추출은 백로그(CLAUDE.md 알려진 갭). */}
@@ -581,6 +604,35 @@ const styles = StyleSheet.create({
   body: {
     flex: 1,
   },
+  // 기록 추가 FAB — 나라상세와 동일(위 주석의 중복 참고)
+  addFab: {
+    position: 'absolute',
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: theme.colors.accent,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderRadius: 28,
+    shadowColor: theme.colors.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  addFabPlus: {
+    fontSize: 18,
+    fontFamily: theme.fonts.bold,
+    color: '#fff',
+    lineHeight: 20,
+  },
+  addFabText: {
+    fontSize: 14,
+    fontFamily: theme.fonts.bold,
+    color: '#fff',
+  },
+
   centerBody: {
     flex: 1,
     alignItems: 'center',
@@ -593,7 +645,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   scrollContent: {
-    paddingBottom: 32,
+    // FAB(하단 고정)에 마지막 줄이 가리지 않도록 나라상세와 같은 여유를 준다.
+    paddingBottom: 96,
   },
   countLabel: {
     fontSize: 14,

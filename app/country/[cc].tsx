@@ -329,7 +329,7 @@ export default function CountryDetailScreen() {
       {/* 기록 추가 진입점 — 작성 흐름은 나라상세에서만 시작(C-2-3b) */}
       <Pressable
         style={[styles.addFab, { bottom: insets.bottom + 16 }]}
-        onPress={() => router.push({ pathname: '/compose', params: { cc, nm } } as any)}
+        onPress={() => router.push({ pathname: '/compose', params: { cc } } as any)}
       >
         <Text style={styles.addFabPlus}>+</Text>
         <Text style={styles.addFabText}>기록 추가</Text>
