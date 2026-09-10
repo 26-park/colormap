@@ -1,3 +1,5 @@
+import { booleanPointInPolygon } from '@turf/boolean-point-in-polygon';
+import { point } from '@turf/helpers';
 import sggGeoJSON from '@/data/kr-sgg/sgg_kr_render.json';
 
 // MapLibre v11의 LngLatBounds 형식 — [west, south, east, north].
@@ -53,4 +55,39 @@ export function getSggBounds(osmId: number): SggBounds | null {
 
   if (!Number.isFinite(west) || !Number.isFinite(south)) return null;
   return [west, south, east, north];
+}
+
+export type SggHit = {
+  osmId: number;
+  name: string;
+};
+
+/**
+ * 탭 좌표를 실제로 포함하는 시군구를 찾는다. 없으면 null(바다·국경 밖).
+ *
+ * ⭐⭐ 왜 필요한가 — 오탭의 진짜 원인은 히트박스 "크기"가 아니라 `features[0]`을
+ * 그대로 쓴 것이다. 네이티브는 탭 지점 기준 **44×44dp 사각형**으로 질의하고
+ * (MLRNPressableSource.kt `DEFAULT_HITBOX = RectF(22,22,22,22)`), 줌 4에서는
+ * 시군구 하나가 약 9.6dp라 **한 번 탭에 20개 이상이 후보로 들어온다.** 그 순서를
+ * 우리가 정하지 않으므로 엉뚱한 시군구가 열렸다(충주시를 노렸는데 정선군).
+ * `hitbox` 는 공개 GeoJSONSource props 에 노출돼 있지 않아 JS 에서 줄일 수도 없다.
+ *
+ * 대신 `PressEvent.lngLat`(탭 지점)으로 직접 판정하면 히트박스와 무관하게 정확해진다.
+ * `lib/countryFromCoord.ts` 의 `getCountryFromCoord` 와 **같은 패턴**이다.
+ *
+ * ⚠️ **오탭이 0이 되지는 않는다** — "누른 곳이 아닌 데가 열리는 것"을 없앨 뿐,
+ * 9.6dp 목표를 손가락으로 정확히 누르는 어려움은 그대로다. 실기기에서 여전히
+ * 답답하면 그때 SGG_MIN_ZOOM 을 5로 올리는 것을 검토한다.
+ *
+ * ⚠️ 화면에 그려지는 것과 같은 **렌더본**(해안선 클립 + 3% 단순화)으로 판정한다 —
+ * 사용자가 본 도형과 판정 도형이 어긋나지 않게 하기 위함이다(원본 미클립이 아니다).
+ */
+export function findSggAtPoint(lng: number, lat: number): SggHit | null {
+  const pt = point([lng, lat]);
+  for (const feature of (sggGeoJSON as any).features) {
+    if (booleanPointInPolygon(pt, feature.geometry)) {
+      return { osmId: feature.properties.osm_id, name: feature.properties.name };
+    }
+  }
+  return null;
 }

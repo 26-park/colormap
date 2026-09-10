@@ -20,6 +20,7 @@ import countriesGeoJSON from '@/assets/geo/countries.json';
 // 렌더링용 시군구 경계 — 해안선 클립 + 3% 단순화본(718KB). 판정용 미클립 원본과
 // 별개 파일이다. 출처/라이선스는 data/kr-sgg/README.md 참고 (OSM, ODbL 1.0).
 import sggGeoJSON from '@/data/kr-sgg/sgg_kr_render.json';
+import { findSggAtPoint } from '@/lib/sggGeo';
 // 시군구 라벨 앵커 — 피처당 점 1개(data/kr-sgg/make_labels.py로 생성).
 // 경계 폴리곤에 직접 symbol을 물리면 MultiPolygon 파트마다 라벨이 붙어
 // 섬이 많은 시군구에서 이름이 여러 번 나온다(여수시 6개, 통영시 7개 실측).
@@ -246,9 +247,16 @@ export default function MapScreen() {
   //    스타일에서 더 위에 있는 레이어를 가진 소스가 이긴다 = sgg. 바다 쪽을 찍어
   //    sgg 가 안 잡히면 countries 만 남아 /country/KR 로 가는 폴백이 된다.
   function handleSggPress(event: NativeSyntheticEvent<PressEventWithFeatures>) {
+    // ⭐ features[0] 을 그대로 쓰면 안 된다 — 네이티브는 탭 지점 기준 44×44dp
+    //    사각형으로 질의하므로(DEFAULT_HITBOX) 줌 4에서는 20개 넘는 시군구가
+    //    후보로 들어오고, 그 순서를 우리가 정하지 않는다. 실제로 충주시를 노렸는데
+    //    정선군이 열렸다. 탭 좌표로 직접 포함 판정한다(findSggAtPoint).
+    //    경계 밖(바다·국경)을 찍은 경우만 기존 동작으로 폴백한다.
+    const [lng, lat] = event.nativeEvent.lngLat;
+    const hit = findSggAtPoint(lng, lat);
     const feature = event.nativeEvent.features[0];
-    const osmId = feature?.properties?.osm_id;
-    const name = feature?.properties?.name;
+    const osmId = hit?.osmId ?? feature?.properties?.osm_id;
+    const name = hit?.name ?? feature?.properties?.name;
     if (osmId == null) return;
 
     // 상세에서 돌아올 때는 카메라를 초기화하지 않는다(위 useFocusEffect 참고)
