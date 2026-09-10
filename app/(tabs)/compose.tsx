@@ -16,7 +16,7 @@ import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { decode } from 'base64-arraybuffer';
 import * as Crypto from 'expo-crypto';
 import * as Location from 'expo-location';
-import { Map, Camera, ViewAnnotation, GeoJSONSource, Layer, type PressEvent } from '@maplibre/maplibre-react-native';
+import { Map, Camera, GeoJSONSource, Layer, type PressEvent } from '@maplibre/maplibre-react-native';
 import { Text } from '@/components/AppText';
 import { TextInput } from '@/components/AppTextInput';
 import { VisibilitySelector } from '@/components/VisibilitySelector';
@@ -437,20 +437,43 @@ export default function ComposeScreen() {
                 />
               </GeoJSONSource>
             )}
+            {/* ⭐⭐ 핀은 반드시 **마지막에** 선언한다 — 우리 레이어는 선언 순서대로
+                style.addLayer() 로 맨 위에 쌓이므로, 마지막이 곧 최상단이다.
+                ⚠️ 예전엔 ViewAnnotation(draggable)을 썼는데 **육지에서 핀이 아예
+                   안 보였다.** 안드로이드의 ViewAnnotation 은 오버레이 View 가
+                   아니라 SymbolManager 심볼이고, SymbolManager 는 스타일 로드
+                   직후 만들어지는 반면(MLRNMapView.kt) 우리 Layer 들은 그 뒤에
+                   맨 위로 얹히기 때문에(MLRNLayer.kt style.addLayer) 불투명한
+                   country-fill 이 핀을 덮었다. 바다에서만 보이던 게 그 증거다.
+                   자세한 경위는 CLAUDE.md 참고.
+                circle 레이어면 순서를 우리가 100% 통제하고, 이미지 에셋도 필요
+                없다(기존 핀이 주황 원 + 흰 테두리라 그대로 재현된다).
+                드래그는 빠졌다 — 지도를 탭하면 핀이 그 자리로 옮겨간다. */}
             {pickedCoord && (
-              // Marker 는 드래그를 지원하지 않아 ViewAnnotation 으로 바꿨다.
-              // draggable 은 네이티브 구현이라 터치 핸들러를 직접 만들 필요가 없다.
-              <ViewAnnotation
+              <GeoJSONSource
                 id="compose-pin"
-                lngLat={[pickedCoord.lng, pickedCoord.lat]}
-                draggable
-                onDragEnd={(e) => {
-                  const [lng, lat] = e.nativeEvent.lngLat;
-                  handleManualPick(lng, lat);
-                }}
+                data={{
+                  type: 'FeatureCollection',
+                  features: [
+                    {
+                      type: 'Feature',
+                      properties: {},
+                      geometry: { type: 'Point', coordinates: [pickedCoord.lng, pickedCoord.lat] },
+                    },
+                  ],
+                } as any}
               >
-                <View style={styles.pin} />
-              </ViewAnnotation>
+                <Layer
+                  id="compose-pin-circle"
+                  type="circle"
+                  paint={{
+                    'circle-radius': 8,
+                    'circle-color': theme.colors.accent,
+                    'circle-stroke-width': 2,
+                    'circle-stroke-color': '#FFFFFF',
+                  }}
+                />
+              </GeoJSONSource>
             )}
           </Map>
 
@@ -664,14 +687,6 @@ const styles = StyleSheet.create({
   },
   map: {
     flex: 1,
-  },
-  pin: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: theme.colors.accent,
-    borderWidth: 2,
-    borderColor: '#fff',
   },
   gpsChip: {
     position: 'absolute',
