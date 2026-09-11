@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Text } from '@/components/AppText';
 import { ErrorView } from '@/components/ErrorView';
 import { theme } from '@/constants/theme';
+import { useMapPinsSetting } from '@/hooks/use-map-pins-setting';
 import { LEGAL_URLS } from '@/constants/legal';
 import { useAuth } from '@/context/auth';
 import { supabase } from '@/lib/supabase';
@@ -27,6 +28,19 @@ export default function SettingsScreen() {
 
   const [signingOut, setSigningOut] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
+
+  // 지도에 핀 표시 — AsyncStorage(기기별 표시 설정). 읽기 실패 시 기본값이
+  // 켜짐인 근거는 훅 주석 참고.
+  const { showPins, setShowPins } = useMapPinsSetting();
+
+  async function handlePinsToggle(next: boolean) {
+    try {
+      await setShowPins(next);
+    } catch {
+      // 훅이 이미 이전 값으로 되돌렸다 — 조용히 어긋난 채 두지 않는다.
+      Alert.alert('변경하지 못했어요', '잠시 후 다시 시도해주세요.');
+    }
+  }
 
   // 계정 공개범위 — profiles.visibility. 조용한 실패 금지 원칙(Phase J)대로
   // 실패 시 compact ErrorView + 재시도, 저장 실패 시엔 토글을 원복한다.
@@ -230,6 +244,25 @@ export default function SettingsScreen() {
           <Pressable style={styles.row} onPress={() => Linking.openURL(LEGAL_URLS.privacy)}>
             <Text style={styles.rowText}>개인정보처리방침</Text>
           </Pressable>
+        </View>
+
+        {/* 지도 */}
+        <Text style={styles.sectionTitle}>지도</Text>
+        <View style={styles.card}>
+          <View style={styles.visibilityRow}>
+            <View style={styles.visibilityTextWrap}>
+              <Text style={styles.rowText}>지도에 핀 표시</Text>
+              <Text style={styles.rowCaption}>
+                내가 기록한 정확한 위치를 지도 위에 점으로 표시해요. 색칠은 다녀온
+                지역, 핀은 그 안에서 찍은 지점이에요.
+              </Text>
+            </View>
+            <Switch
+              value={showPins}
+              onValueChange={handlePinsToggle}
+              trackColor={{ true: theme.colors.accent }}
+            />
+          </View>
         </View>
 
         {/* 앱 정보 */}

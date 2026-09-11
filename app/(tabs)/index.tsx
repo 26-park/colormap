@@ -21,6 +21,8 @@ import countriesGeoJSON from '@/assets/geo/countries.json';
 // 별개 파일이다. 출처/라이선스는 data/kr-sgg/README.md 참고 (OSM, ODbL 1.0).
 import sggGeoJSON from '@/data/kr-sgg/sgg_kr_render.json';
 import { findSggAtPoint } from '@/lib/sggGeo';
+import { fetchMyPins, pinsToGeoJSON, type MapPin } from '@/lib/mapPins';
+import { useMapPinsSetting } from '@/hooks/use-map-pins-setting';
 // 시군구 라벨 앵커 — 피처당 점 1개(data/kr-sgg/make_labels.py로 생성).
 // 경계 폴리곤에 직접 symbol을 물리면 MultiPolygon 파트마다 라벨이 붙어
 // 섬이 많은 시군구에서 이름이 여러 번 나온다(여수시 6개, 통영시 7개 실측).
@@ -110,6 +112,9 @@ export default function MapScreen() {
   const { session } = useAuth();
   const [visitedMap, setVisitedMap] = useState<Record<string, string>>({});
   const [sggVisitedMap, setSggVisitedMap] = useState<Record<number, string>>({});
+  // 내 글 위치 핀 — 설정으로 끌 수 있다(기본 켜짐).
+  const { showPins } = useMapPinsSetting();
+  const [pins, setPins] = useState<MapPin[]>([]);
   const [colorLoadError, setColorLoadError] = useState(false);
 
   const mapRef = useRef<MapRef>(null);
@@ -226,6 +231,25 @@ export default function MapScreen() {
   }, [loadVisited, loadSggVisited]);
 
   useFocusEffect(loadAllVisited);
+
+  // 핀은 설정이 켜져 있을 때만 조회한다 — 꺼두면 쿼리 자체가 안 나간다.
+  // showPins 가 의존성이라 설정에서 켠 뒤 지도로 돌아오면 그 시점에 로드된다.
+  const userId = session?.user.id;
+  useFocusEffect(
+    useCallback(() => {
+      if (!showPins || !userId) {
+        setPins([]);
+        return;
+      }
+      let cancelled = false;
+      fetchMyPins(userId).then((rows) => {
+        if (!cancelled) setPins(rows);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }, [showPins, userId]),
+  );
 
   function handleCountryPress(event: NativeSyntheticEvent<PressEventWithFeatures>) {
     const feature = event.nativeEvent.features[0];
@@ -368,6 +392,30 @@ export default function MapScreen() {
             }}
           />
         </GeoJSONSource>
+
+        {/* ⭐⭐ 내 글 위치 핀 — **반드시 마지막에 선언한다.**
+            우리 Layer 들은 선언 순서대로 style.addLayer() 로 위에 쌓이므로
+            마지막이 곧 최상단이고, 그래야 나라/시군구 색칠 fill 위에 온다.
+            (작성 화면에서 ViewAnnotation 이 fill 아래로 깔려 육지에서 안 보이던
+             문제와 같은 종류다 — CLAUDE.md 참고.)
+            ⭐ onPress 를 주지 않는다. 주면 이 소스도 44dp 히트박스를 받아
+               **핀 주변에서 시군구 탭이 죽는다**(방금 고친 오탭 문제 재발).
+               onPress 가 없으면 hasOnPress=false → hitbox=null → onMapClick 이
+               이 소스를 아예 건너뛴다. 부작용 0. */}
+        {showPins && pins.length > 0 && (
+          <GeoJSONSource id="my-pins" data={pinsToGeoJSON(pins) as any}>
+            <Layer
+              id="my-pins-circle"
+              type="circle"
+              paint={{
+                'circle-radius': 5,
+                'circle-color': '#FFFFFF',
+                'circle-stroke-width': 2.5,
+                'circle-stroke-color': theme.colors.text,
+              }}
+            />
+          </GeoJSONSource>
+        )}
       </Map>
 
       {/* ── 상단 헤더 오버레이 ── */}
